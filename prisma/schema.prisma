@@ -1,0 +1,145 @@
+// Prisma schema — AI Platform (PostgreSQL)
+generator client {
+  provider             = "prisma-client-py"
+  interface            = "asyncio"
+  recursive_type_depth = 5
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                   String   @id @default(cuid())
+  email                String   @unique
+  password_hash        String
+  github_id            String?  @unique @map("github_id")
+  github_username      String   @default("") @map("github_username")
+  github_connected     Boolean  @default(false) @map("github_connected")
+  github_installation_id BigInt?  @map("github_installation_id")
+  role                 String   @default("USER")  // "USER" | "ADMIN"
+  is_active            Boolean  @default(true) @map("is_active")
+  created_at           DateTime @default(now()) @map("created_at")
+  updated_at           DateTime @updatedAt @map("updated_at")
+
+  apiKeys        ApiKey[]
+  pipelineConfig PipelineConfig?
+  logs           Log[]
+  projects       Project[]
+
+  @@map("users")
+}
+
+model ApiKey {
+  id            String   @id @default(cuid())
+  user_id       String   @map("user_id")
+  provider      String   // openai | gemini | deepseek | groq | anthropic | openrouter
+  encrypted_key String   @map("encrypted_key")
+  label         String   @default("")
+  created_at    DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("api_keys")
+}
+
+model PipelineConfig {
+  id                   String   @id @default(cuid())
+  user_id              String   @unique @map("user_id")
+  
+  // Settings
+  clear_sandbox_enabled Boolean @default(true)
+  design_system_enabled Boolean @default(true)
+  system_prompt_enabled Boolean @default(true)
+  self_healing_enabled Boolean @default(true)
+  summary_enabled      Boolean @default(true)
+  use_shared_models    Boolean @default(true)
+  shared_models        String  @default("")
+  
+  // Model assignments
+  planning_model       String  @default("")
+  architecture_model   String  @default("")
+  frontend_model       String  @default("")
+  backend_model        String  @default("")
+  validation_model     String  @default("")
+
+  // Iteration limits
+  max_iter             Int     @default(70)
+  max_healing_attempts Int     @default(20)
+  
+  // Advanced features
+  active_memory_enabled Boolean @default(true)
+  builder_enabled       Boolean @default(true)
+  auto_install_enabled  Boolean @default(true)
+  project_build_enabled Boolean @default(true)
+  integration_test_enabled Boolean @default(false)
+  linter_enabled        Boolean @default(true)
+  runtime_enabled       Boolean @default(true)
+  feature_validator_enabled Boolean @default(true)
+
+  updated_at           DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("pipeline_configs")
+}
+
+model Log {
+  id         String   @id @default(cuid())
+  user_id    String?  @map("user_id")
+  event      String
+  detail     String   @default("")
+  level      String   @default("info")   // info | warn | error
+  created_at DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [user_id], references: [id], onDelete: SetNull)
+
+  @@map("logs")
+}
+
+model Project {
+  id            String   @id @default(cuid())
+  user_id       String   @map("user_id")
+  name          String   @default("Untitled Project")
+  github_repo_url String @default("") @map("github_repo_url")
+  github_repo_name String @default("") @map("github_repo_name")
+  github_deploy_status String @default("IDLE") @map("github_deploy_status")
+  github_deploy_error String @default("") @map("github_deploy_error")
+  status        String   @default("IDLE")
+  last_narration String  @default("") @map("last_narration")
+  error_message String   @default("") @map("error_message")
+  created_at    DateTime @default(now()) @map("created_at")
+  updated_at    DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("projects")
+}
+
+model ProviderRegistry {
+  id         String   @id @map("id")
+  name       String
+  enabled    Boolean  @default(true)
+  sort_order Int      @default(0) @map("sort_order")
+  created_at DateTime @default(now()) @map("created_at")
+  updated_at DateTime @updatedAt @map("updated_at")
+
+  models     ModelRegistry[]
+
+  @@map("provider_registry")
+}
+
+model ModelRegistry {
+  id          String   @id @map("id")
+  model_id    String   @map("model_id")
+  provider_id String   @map("provider_id")
+  enabled     Boolean  @default(true)
+  sort_order  Int      @default(0) @map("sort_order")
+  created_at  DateTime @default(now()) @map("created_at")
+  updated_at  DateTime @updatedAt @map("updated_at")
+
+  provider    ProviderRegistry @relation(fields: [provider_id], references: [id], onDelete: Cascade)
+
+  @@map("model_registry")
+}

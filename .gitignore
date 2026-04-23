@@ -1,0 +1,64 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local tooling
+.codex
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+backend/.env
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+!backend/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+backend/venv/
+backend/.pytest_cache/
+
+# Node
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+frontend-old/node_modules/
+
+# Build outputs / caches
+frontend/dist/
+frontend-old/dist/
+*.tsbuildinfo
+
+# Runtime data
+backend/sandbox/
+backend/data/
+backend/*.log
+backend/*_restart*.log
+backend/server_v*.log
+backend/api_trigger*.log
+backend/kilo.db
+backend/kilo/server/kilo.db
+frontend/*.log
+frontend-old/*.log
+
+# Legacy / optional folders not needed in release push
+frontend-old/
+
+# Misc
+*.sqlite
+*.sqlite3
+
+# Project notes (not required for runtime)
+Doc/

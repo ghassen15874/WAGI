@@ -1,0 +1,13 @@
+{
+  "src/pages/Login.tsx": {
+    "export": "default"
+  },
+  "src/pages/Register.tsx": {
+    "export": "default"
+  },
+  "src/pages/Login.css": {},
+  "src/components/Navbar.tsx": {
+    "export": "default"
+  },
+  "src/components/Navbar.css": {}
+}

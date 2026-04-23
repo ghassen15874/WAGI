@@ -1,0 +1,89 @@
+erDiagram
+    User {
+        String id
+        String email
+        String password_hash
+        String github_id
+        String github_username
+        Boolean github_connected
+        BigInt github_installation_id
+        String role
+        Boolean is_active
+        DateTime created_at
+        DateTime updated_at
+    }
+    ApiKey {
+        String id
+        String user_id
+        String provider
+        String encrypted_key
+        String label
+        DateTime created_at
+    }
+    User ||--o{ ApiKey : "user_id"
+    
+    PipelineConfig {
+        String id
+        String user_id
+        Boolean clear_sandbox_enabled
+        Boolean design_system_enabled
+        Boolean system_prompt_enabled
+        Boolean self_healing_enabled
+        Boolean summary_enabled
+        Boolean use_shared_models
+        String shared_models
+        String planning_model
+        String architecture_model
+        String frontend_model
+        String backend_model
+        String validation_model
+        Int max_iter
+        Int max_healing_attempts
+        Boolean active_memory_enabled
+        Boolean builder_enabled
+        Boolean auto_install_enabled
+        Boolean project_build_enabled
+        Boolean integration_test_enabled
+        Boolean linter_enabled
+        Boolean runtime_enabled
+        Boolean feature_validator_enabled
+        DateTime updated_at
+    }
+    User ||--o1 PipelineConfig : "user_id"
+
+    Log {
+        String id
+        String user_id
+        String event
+        String detail
+        String level
+        DateTime created_at
+    }
+    User ||--o{ Log : "user_id"
+
+    Project {
+        String id
+        String user_id
+        String name
+        String github_repo_url
+        String status
+        DateTime created_at
+        DateTime updated_at
+    }
+    User ||--o{ Project : "user_id"
+
+    ProviderRegistry {
+        String id
+        String name
+        Boolean enabled
+        Int sort_order
+    }
+
+    ModelRegistry {
+        String id
+        String model_id
+        String provider_id
+        Boolean enabled
+        Int sort_order
+    }
+    ProviderRegistry ||--o{ ModelRegistry : "provider_id"
