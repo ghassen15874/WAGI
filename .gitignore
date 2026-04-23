@@ -35,23 +35,23 @@ node_modules/
 frontend/node_modules/
 backend/node_modules/
 frontend-old/node_modules/
+.npm/
+.pnpm-store/
+.yarn/
 
 # Build outputs / caches
 frontend/dist/
 frontend-old/dist/
 *.tsbuildinfo
+.cache/
 
 # Runtime data
 backend/sandbox/
+sandbox/
 backend/data/
-backend/*.log
-backend/*_restart*.log
-backend/server_v*.log
-backend/api_trigger*.log
+*.log
 backend/kilo.db
 backend/kilo/server/kilo.db
-frontend/*.log
-frontend-old/*.log
 
 # Legacy / optional folders not needed in release push
 frontend-old/

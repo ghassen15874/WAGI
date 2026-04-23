@@ -206,6 +206,18 @@ export default function BuilderPage() {
   }, [id]);
 
   useEffect(() => {
+    // Keep /app (no selected project) on the initial new-chat screen unless
+    // we are actively generating and planning to auto-route to a new session.
+    if (!id && !shouldAutoOpenGeneratedSessionRef.current) {
+      setIsInitialState(true);
+      if (state.status !== "generating") {
+        setShowPreview(false);
+        setIsPreviewOpen(false);
+      }
+    }
+  }, [id, state.status]);
+
+  useEffect(() => {
     // Only auto-route after generation creates/selects a session from the root /app page.
     // Do not override explicit user navigation between /app/:id routes.
     if (!id && state.sessionId && shouldAutoOpenGeneratedSessionRef.current) {
@@ -242,6 +254,14 @@ export default function BuilderPage() {
     setRuntimeProjectId(null);
     navigate("/app");
   };
+
+  const showInitialWorkspace = !id && isInitialState;
+  const initialProviderOptions =
+    availableProviders.length
+      ? availableProviders
+      : [{ id: provider, name: provider, models: model ? [model] : [] }];
+  const initialSelectedProvider =
+    initialProviderOptions.find((p) => p.id === provider) || initialProviderOptions[0];
 
   return (
     <div
@@ -443,19 +463,102 @@ export default function BuilderPage() {
           overflow: "hidden",
         }}
       >
-        {isInitialState ? (
+        {showInitialWorkspace ? (
           /* Centered Initial State */
           <div
             style={{
               flex: 1,
               display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
+              flexDirection: "column",
               background: "var(--color-bg)",
-              padding: "24px",
-              position: "relative",
+              overflow: "hidden",
             }}
           >
+            <div
+              style={{
+                padding: "12px 16px",
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                borderBottom: "1px solid var(--color-border)",
+                background: "var(--color-surface)",
+              }}
+            >
+              <div style={{ fontWeight: 600, fontSize: 18, color: "var(--color-text-muted)", display: "flex", alignItems: "center" }}>
+                WAGI <span style={{ fontSize: 13, color: "var(--color-text-muted)", opacity: 0.5, marginLeft: 4 }}>platform</span>
+              </div>
+              <div style={{ display: "flex", gap: 6, flex: 1, justifyContent: "flex-end", opacity: 0.6 }}>
+                <button
+                  onClick={() => setShowPreview((v) => !v)}
+                  className="btn btn-ghost"
+                  style={{ padding: "4px 10px", fontSize: 11, borderRadius: 12 }}
+                  title="Toggle Preview"
+                >
+                  Preview
+                </button>
+                <button
+                  onClick={() => setShowLogs((v) => !v)}
+                  className="btn btn-ghost"
+                  style={{ padding: "4px 10px", fontSize: 11, borderRadius: 12 }}
+                  title="Toggle Logs"
+                >
+                  Logs
+                </button>
+                <select
+                  value={provider}
+                  onChange={(e) => {
+                    const selected = initialProviderOptions.find((p) => p.id === e.target.value) || initialProviderOptions[0];
+                    setProvider(selected.id);
+                    setModel(selected.models?.[0] || "");
+                  }}
+                  style={{
+                    padding: "6px 10px",
+                    background: "transparent",
+                    border: "none",
+                    color: "var(--color-text-muted)",
+                    fontSize: 12,
+                    outline: "none",
+                    cursor: "pointer",
+                    maxWidth: 140,
+                  }}
+                >
+                  {initialProviderOptions.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+                <select
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  style={{
+                    padding: "6px 10px",
+                    background: "transparent",
+                    border: "none",
+                    color: "var(--color-text-muted)",
+                    fontSize: 12,
+                    outline: "none",
+                    cursor: "pointer",
+                    maxWidth: 170,
+                  }}
+                  disabled={!initialSelectedProvider || initialSelectedProvider.models.length === 0}
+                >
+                  {(initialSelectedProvider?.models || []).map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div
+              style={{
+                flex: 1,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "24px",
+                position: "relative",
+                overflow: "auto",
+              }}
+            >
             <div
               style={{
                 width: "100%",
@@ -611,6 +714,7 @@ export default function BuilderPage() {
                   ))}
                 </div>
               </div>
+            </div>
             </div>
           </div>
         ) : (

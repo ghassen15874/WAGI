@@ -63,8 +63,13 @@ export default function WebContainerPreview({
         if (generationStatus === 'idle') {
             setMode('host')
             setStatus('idle')
-            setStatusMsg('Waiting for generated project...')
-            setIframeUrl(HOST_PREVIEW_URL)
+            if (allowHostPreview) {
+                setStatusMsg('Waiting for generated project...')
+                setIframeUrl(HOST_PREVIEW_URL)
+            } else {
+                setStatusMsg('Preview paused for this chat. Click Run Project to start live preview.')
+                setIframeUrl('')
+            }
             return () => {
                 cancelled = true
             }
