@@ -3,6 +3,7 @@ import shutil
 import tempfile
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Query
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from ...orchestrator.session_service import (
     cancel_project_execution,
@@ -14,6 +15,10 @@ from ..auth.middleware import get_current_user
 from ..config import settings
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
+
+
+class RenameProjectRequest(BaseModel):
+    name: str
 
 
 def _remove_file(path: str) -> None:
@@ -39,6 +44,35 @@ async def list_projects(user: dict = Depends(get_current_user)):
             (user["sub"],)
         ).fetchall()
         return {"projects": [dict(r) for r in rows]}
+
+
+@router.patch("/{project_id}")
+async def rename_project(
+    project_id: str,
+    req: RenameProjectRequest,
+    user: dict = Depends(get_current_user),
+):
+    name = str(req.name or "").strip()
+    if not name:
+        raise HTTPException(400, "Project name cannot be empty")
+    if len(name) > 255:
+        raise HTTPException(400, "Project name must be 255 characters or fewer")
+
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM projects WHERE id = %s AND user_id = %s",
+            (project_id, user["sub"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Project not found")
+
+        conn.execute(
+            "UPDATE projects SET name = %s, updated_at = NOW() WHERE id = %s",
+            (name, project_id),
+        )
+        conn.commit()
+
+    return {"success": True, "project": {"id": project_id, "name": name}}
 
 @router.get("/{project_id}/files")
 async def get_project_files(project_id: str, user: dict = Depends(get_current_user)):

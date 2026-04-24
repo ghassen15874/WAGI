@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import axios from "axios";
 import { useAgent } from "../hooks/useAgent";
 import ChatPanel from "../components/ChatPanel";
 import WebContainerPreview from "../components/WebContainerPreview";
 import FileTree from "../components/FileTree";
 import SettingsPage from "./SettingsPage";
-import { Settings, Plus, MessageSquare, LogOut, LayoutDashboard, Trash2, Download, Sun, Moon, Play } from "lucide-react";
+import { Settings, Plus, MessageSquare, LogOut, LayoutDashboard, Trash2, Download, Sun, Moon, Play, Pencil } from "lucide-react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { useTheme } from "../hooks/useTheme";
@@ -46,11 +46,33 @@ export default function BuilderPage() {
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [initialPrompt, setInitialPrompt] = useState("");
   const [isInitialState, setIsInitialState] = useState(true);
+  const [projectSearchTerm, setProjectSearchTerm] = useState("");
+  const [isProjectSelectionMode, setIsProjectSelectionMode] = useState(false);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
+  const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameError, setRenameError] = useState("");
+  const [renameSavingProjectId, setRenameSavingProjectId] = useState<string | null>(null);
+  const [deleteTargetIds, setDeleteTargetIds] = useState<string[]>([]);
+  const [deleteError, setDeleteError] = useState("");
+  const [isDeletingProjects, setIsDeletingProjects] = useState(false);
   const { theme, toggleTheme } = useTheme();
   const shouldAutoOpenGeneratedSessionRef = useRef(false);
   const skipProjectHydrationRef = useRef(false);
 
   const fileCount = state.files ? Object.keys(state.files).length : 0;
+  const normalizedProjectSearch = projectSearchTerm.trim().toLowerCase();
+  const filteredProjects = useMemo(
+    () =>
+      projects.filter((project) =>
+        String(project?.name || "")
+          .toLowerCase()
+          .includes(normalizedProjectSearch)
+      ),
+    [projects, normalizedProjectSearch]
+  );
+  const allVisibleProjectsSelected =
+    filteredProjects.length > 0 && filteredProjects.every((project) => selectedProjectIds.includes(project.id));
 
   useEffect(() => {
     if (state.status === 'generating' || fileCount > 0 || state.sessionId) {
@@ -76,6 +98,16 @@ export default function BuilderPage() {
         .catch(console.error);
     }
   }, [token, state.sessionId]);
+
+  useEffect(() => {
+    const projectIdSet = new Set(projects.map((project) => project.id));
+    setSelectedProjectIds((prev) => prev.filter((projectId) => projectIdSet.has(projectId)));
+    if (renamingProjectId && !projectIdSet.has(renamingProjectId)) {
+      setRenamingProjectId(null);
+      setRenameDraft("");
+      setRenameError("");
+    }
+  }, [projects, renamingProjectId]);
 
   useEffect(() => {
     const fetchProviders = () => {
@@ -114,18 +146,152 @@ export default function BuilderPage() {
     localStorage.setItem(BUILDER_PREFS_KEY, JSON.stringify({ provider, model }));
   }, [provider, model]);
 
-  const handleDeleteProject = async (projId: string, e: React.MouseEvent) => {
+  const openDeleteDialog = (projectIds: string[]) => {
+    const dedupedIds = Array.from(new Set(projectIds.filter(Boolean)));
+    if (!dedupedIds.length) return;
+    setDeleteError("");
+    setDeleteTargetIds(dedupedIds);
+  };
+
+  const closeDeleteDialog = () => {
+    if (isDeletingProjects) return;
+    setDeleteTargetIds([]);
+    setDeleteError("");
+  };
+
+  const handleDeleteProject = (projId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm("Are you sure you want to delete this project?")) return;
+    openDeleteDialog([projId]);
+  };
+
+  const confirmDeleteProjects = async () => {
+    if (!token || deleteTargetIds.length === 0) return;
+    setIsDeletingProjects(true);
+    setDeleteError("");
+    const idsToDelete = [...deleteTargetIds];
+
     try {
-      await axios.delete(`/api/projects/${projId}`, { headers: { Authorization: `Bearer ${token}` } });
-      setProjects((prev) => prev.filter((p) => p.id !== projId));
-      if (state.sessionId === projId || id === projId) {
-        reset();
-        navigate("/app");
+      const results = await Promise.allSettled(
+        idsToDelete.map((projId) =>
+          axios.delete(`/api/projects/${projId}`, { headers: { Authorization: `Bearer ${token}` } })
+        )
+      );
+
+      const deletedIds = idsToDelete.filter((_, index) => results[index].status === "fulfilled");
+      const failedIds = idsToDelete.filter((_, index) => results[index].status === "rejected");
+
+      if (deletedIds.length > 0) {
+        const deletedSet = new Set(deletedIds);
+        setProjects((prev) => prev.filter((project) => !deletedSet.has(project.id)));
+        const remainingSelected = selectedProjectIds.filter((projectId) => !deletedSet.has(projectId));
+        setSelectedProjectIds(remainingSelected);
+        if (!remainingSelected.length) {
+          setIsProjectSelectionMode(false);
+        }
+
+        if (deletedIds.some((projId) => state.sessionId === projId || id === projId)) {
+          reset();
+          navigate("/app");
+        }
       }
-    } catch (e) {
-      console.error("Failed to delete project", e);
+
+      if (failedIds.length > 0) {
+        setDeleteTargetIds(failedIds);
+        setDeleteError(
+          deletedIds.length > 0
+            ? `Deleted ${deletedIds.length} project(s). Failed to delete ${failedIds.length} project(s).`
+            : "Failed to delete selected project(s)."
+        );
+      } else {
+        setDeleteTargetIds([]);
+      }
+    } catch (error) {
+      console.error("Failed to delete project(s)", error);
+      setDeleteError("Failed to delete selected project(s).");
+    } finally {
+      setIsDeletingProjects(false);
+    }
+  };
+
+  const toggleProjectSelection = (projId: string) => {
+    setSelectedProjectIds((prev) =>
+      prev.includes(projId) ? prev.filter((id) => id !== projId) : [...prev, projId]
+    );
+  };
+
+  const handleProjectRowClick = (projId: string) => {
+    if (isProjectSelectionMode) {
+      toggleProjectSelection(projId);
+      return;
+    }
+    if (renamingProjectId) {
+      return;
+    }
+    navigate(`/app/${projId}`);
+  };
+
+  const toggleProjectSelectionMode = () => {
+    setIsProjectSelectionMode((prev) => {
+      const next = !prev;
+      if (!next) {
+        setSelectedProjectIds([]);
+      }
+      return next;
+    });
+    setRenamingProjectId(null);
+    setRenameDraft("");
+    setRenameError("");
+  };
+
+  const startRenameProject = (projectId: string, currentName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsProjectSelectionMode(false);
+    setSelectedProjectIds([]);
+    setRenamingProjectId(projectId);
+    setRenameDraft(currentName || "");
+    setRenameError("");
+  };
+
+  const cancelRenameProject = (e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+    }
+    setRenamingProjectId(null);
+    setRenameDraft("");
+    setRenameError("");
+    setRenameSavingProjectId(null);
+  };
+
+  const submitRenameProject = async (projectId: string) => {
+    if (!token || renameSavingProjectId === projectId) return;
+    const nextName = renameDraft.trim();
+    if (!nextName) {
+      setRenameError("Project name cannot be empty.");
+      return;
+    }
+    if (nextName.length > 255) {
+      setRenameError("Project name must be 255 characters or fewer.");
+      return;
+    }
+
+    setRenameSavingProjectId(projectId);
+    setRenameError("");
+    try {
+      await axios.patch(
+        `/api/projects/${projectId}`,
+        { name: nextName },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setProjects((prev) =>
+        prev.map((project) => (project.id === projectId ? { ...project, name: nextName } : project))
+      );
+      setRenamingProjectId(null);
+      setRenameDraft("");
+    } catch (error: any) {
+      console.error("Failed to rename project", error);
+      setRenameError(error?.response?.data?.detail || "Failed to rename project.");
+    } finally {
+      setRenameSavingProjectId(null);
     }
   };
 
@@ -252,6 +418,13 @@ export default function BuilderPage() {
     setIsPreviewOpen(false);
     setShowLogs(false);
     setRuntimeProjectId(null);
+    setIsProjectSelectionMode(false);
+    setSelectedProjectIds([]);
+    setRenamingProjectId(null);
+    setRenameDraft("");
+    setRenameError("");
+    setDeleteTargetIds([]);
+    setDeleteError("");
     navigate("/app");
   };
 
@@ -262,6 +435,7 @@ export default function BuilderPage() {
       : [{ id: provider, name: provider, models: model ? [model] : [] }];
   const initialSelectedProvider =
     initialProviderOptions.find((p) => p.id === provider) || initialProviderOptions[0];
+  const deleteTargetProjects = projects.filter((project) => deleteTargetIds.includes(project.id));
 
   return (
     <div
@@ -299,101 +473,260 @@ export default function BuilderPage() {
 
         {/* Projects List */}
         <div style={{ flex: 1, overflowY: "auto", padding: "12px" }}>
-          <div
-            style={{
-              fontSize: 11,
-              color: "var(--color-text-muted2)",
-              fontWeight: 700,
-              marginBottom: 8,
-              padding: "0 8px",
-              textTransform: "uppercase",
-              letterSpacing: "0.05em",
-            }}
-          >
-            Your Projects
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, padding: "0 4px" }}>
+            <div
+              style={{
+                fontSize: 11,
+                color: "var(--color-text-muted2)",
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+              }}
+            >
+              Your Projects
+            </div>
+            <button
+              onClick={toggleProjectSelectionMode}
+              className="btn btn-ghost"
+              style={{ padding: "4px 8px", fontSize: 11 }}
+            >
+              {isProjectSelectionMode ? "Done" : "Select"}
+            </button>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {projects.map((p) => (
-              <div
-                key={p.id}
-                onClick={() => navigate(`/app/${p.id}`)}
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: "var(--radius-md)",
-                  background: state.sessionId === p.id || id === p.id ? "var(--color-surface2)" : "transparent",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  fontSize: 13,
-                  cursor: "pointer",
-                  color: "var(--color-text)",
-                  transition: "all var(--transition)",
-                  border: "1px solid transparent",
-                }}
+
+          <input
+            value={projectSearchTerm}
+            onChange={(e) => setProjectSearchTerm(e.target.value)}
+            placeholder="Search projects..."
+            style={{
+              width: "100%",
+              marginBottom: 8,
+              padding: "8px 10px",
+              borderRadius: "var(--radius-md)",
+              border: "1px solid var(--color-border)",
+              background: "var(--color-surface2)",
+              color: "var(--color-text)",
+              fontSize: 12,
+              outline: "none",
+            }}
+          />
+
+          {isProjectSelectionMode && (
+            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+              <button
+                onClick={() => setSelectedProjectIds(filteredProjects.map((project) => project.id))}
+                className="btn btn-ghost"
+                style={{ padding: "5px 8px", fontSize: 11 }}
+                disabled={filteredProjects.length === 0 || allVisibleProjectsSelected}
               >
-                <span
+                Select All
+              </button>
+              <button
+                onClick={() => setSelectedProjectIds([])}
+                className="btn btn-ghost"
+                style={{ padding: "5px 8px", fontSize: 11 }}
+                disabled={selectedProjectIds.length === 0}
+              >
+                Clear
+              </button>
+              <button
+                onClick={() => openDeleteDialog(selectedProjectIds)}
+                className="btn btn-ghost"
+                style={{ padding: "5px 8px", fontSize: 11, color: "var(--color-error)" }}
+                disabled={selectedProjectIds.length === 0}
+              >
+                Delete ({selectedProjectIds.length})
+              </button>
+            </div>
+          )}
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {filteredProjects.length === 0 && (
+              <div style={{ padding: "10px 12px", fontSize: 12, color: "var(--color-text-muted)", textAlign: "center" }}>
+                No projects found.
+              </div>
+            )}
+
+            {filteredProjects.map((p) => {
+              const isActiveProject = state.sessionId === p.id || id === p.id;
+              const isSelectedProject = selectedProjectIds.includes(p.id);
+              const isRenaming = renamingProjectId === p.id;
+
+              return (
+                <div
+                  key={p.id}
+                  onClick={() => handleProjectRowClick(p.id)}
                   style={{
-                    flex: 1,
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    fontWeight: 500,
+                    padding: "10px 12px",
+                    borderRadius: "var(--radius-md)",
+                    background: isSelectedProject || isActiveProject ? "var(--color-surface2)" : "transparent",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontSize: 13,
+                    cursor: "pointer",
+                    color: "var(--color-text)",
+                    transition: "all var(--transition)",
+                    border: isSelectedProject ? "1px solid var(--color-primary)" : "1px solid transparent",
                   }}
                 >
-                  {p.name}
-                </span>
-                {(state.sessionId === p.id || id === p.id) && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <button
-                      onClick={(e) => handleRunProject(p.id, e)}
+                  {isProjectSelectionMode && (
+                    <input
+                      type="checkbox"
+                      checked={isSelectedProject}
+                      onChange={() => toggleProjectSelection(p.id)}
+                      onClick={(e) => e.stopPropagation()}
                       style={{
-                        background: "transparent",
-                        border: "none",
+                        accentColor: "var(--color-primary)",
+                        width: 14,
+                        height: 14,
                         cursor: "pointer",
-                        padding: 4,
-                        display: "flex",
-                        color: runningProjectId === p.id ? "var(--color-primary)" : "var(--color-text-muted)",
-                        borderRadius: 4,
                       }}
-                      title="Run Project Runtime"
-                      disabled={runningProjectId === p.id}
+                    />
+                  )}
+
+                  {isRenaming ? (
+                    <div
+                      style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      <Play size={14} />
-                    </button>
-                    <button
-                      onClick={(e) => handleExportProject(p.id, e)}
+                      <input
+                        value={renameDraft}
+                        autoFocus
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            submitRenameProject(p.id);
+                          }
+                          if (e.key === "Escape") {
+                            e.preventDefault();
+                            cancelRenameProject();
+                          }
+                        }}
+                        style={{
+                          width: "100%",
+                          padding: "6px 8px",
+                          borderRadius: "var(--radius-sm)",
+                          border: "1px solid var(--color-border-hover)",
+                          background: "var(--color-surface)",
+                          color: "var(--color-text)",
+                          fontSize: 12,
+                          outline: "none",
+                        }}
+                      />
+                      {renameError && (
+                        <span style={{ color: "var(--color-error)", fontSize: 11 }}>
+                          {renameError}
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <span
                       style={{
-                        background: "transparent",
-                        border: "none",
-                        cursor: "pointer",
-                        padding: 4,
-                        display: "flex",
-                        color: "var(--color-text-muted)",
-                        borderRadius: 4,
+                        flex: 1,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        fontWeight: 500,
                       }}
-                      title="Export Project as ZIP"
                     >
-                      <Download size={14} />
-                    </button>
-                    <button
-                      onClick={(e) => handleDeleteProject(p.id, e)}
-                      style={{
-                        background: "transparent",
-                        border: "none",
-                        cursor: "pointer",
-                        padding: 4,
-                        display: "flex",
-                        color: "var(--color-error)",
-                        borderRadius: 4,
-                      }}
-                      title="Delete Project"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
+                      {p.name}
+                    </span>
+                  )}
+
+                  {!isProjectSelectionMode && isRenaming && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          submitRenameProject(p.id);
+                        }}
+                        className="btn btn-ghost"
+                        style={{ padding: "4px 6px", fontSize: 11 }}
+                        disabled={renameSavingProjectId === p.id}
+                      >
+                        {renameSavingProjectId === p.id ? "Saving..." : "Save"}
+                      </button>
+                      <button
+                        onClick={(e) => cancelRenameProject(e)}
+                        className="btn btn-ghost"
+                        style={{ padding: "4px 6px", fontSize: 11 }}
+                        disabled={renameSavingProjectId === p.id}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+
+                  {!isProjectSelectionMode && !isRenaming && isActiveProject && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <button
+                        onClick={(e) => handleRunProject(p.id, e)}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          cursor: "pointer",
+                          padding: 4,
+                          display: "flex",
+                          color: runningProjectId === p.id ? "var(--color-primary)" : "var(--color-text-muted)",
+                          borderRadius: 4,
+                        }}
+                        title="Run Project Runtime"
+                        disabled={runningProjectId === p.id}
+                      >
+                        <Play size={14} />
+                      </button>
+                      <button
+                        onClick={(e) => handleExportProject(p.id, e)}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          cursor: "pointer",
+                          padding: 4,
+                          display: "flex",
+                          color: "var(--color-text-muted)",
+                          borderRadius: 4,
+                        }}
+                        title="Export Project as ZIP"
+                      >
+                        <Download size={14} />
+                      </button>
+                      <button
+                        onClick={(e) => startRenameProject(p.id, p.name, e)}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          cursor: "pointer",
+                          padding: 4,
+                          display: "flex",
+                          color: "var(--color-text-muted)",
+                          borderRadius: 4,
+                        }}
+                        title="Rename Project"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        onClick={(e) => handleDeleteProject(p.id, e)}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          cursor: "pointer",
+                          padding: 4,
+                          display: "flex",
+                          color: "var(--color-error)",
+                          borderRadius: 4,
+                        }}
+                        title="Delete Project"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -982,6 +1315,113 @@ export default function BuilderPage() {
           </>
         )}
       </div>
+
+      {/* Delete Projects Confirmation Modal */}
+      {deleteTargetIds.length > 0 && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 110,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
+          }}
+        >
+          <div
+            onClick={closeDeleteDialog}
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "var(--color-bg-overlay)",
+              backdropFilter: "blur(4px)",
+            }}
+          />
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 520,
+              background: "var(--color-surface)",
+              borderRadius: "var(--radius-xl)",
+              border: "1px solid var(--color-border)",
+              boxShadow: "var(--shadow-xl)",
+              position: "relative",
+              padding: 22,
+              display: "flex",
+              flexDirection: "column",
+              gap: 14,
+            }}
+          >
+            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "var(--color-text)" }}>
+              Delete {deleteTargetIds.length > 1 ? "projects" : "project"}?
+            </h3>
+            <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: "var(--color-text-muted)" }}>
+              This action cannot be undone. You are about to permanently remove{" "}
+              <strong>{deleteTargetIds.length}</strong> {deleteTargetIds.length > 1 ? "projects" : "project"}.
+            </p>
+
+            {deleteTargetProjects.length > 0 && (
+              <div
+                style={{
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "var(--radius-md)",
+                  background: "var(--color-surface2)",
+                  maxHeight: 140,
+                  overflowY: "auto",
+                  padding: "8px 10px",
+                }}
+              >
+                {deleteTargetProjects.slice(0, 5).map((project) => (
+                  <div key={project.id} style={{ fontSize: 12, color: "var(--color-text)", padding: "3px 0" }}>
+                    {project.name || "Untitled Project"}
+                  </div>
+                ))}
+                {deleteTargetProjects.length > 5 && (
+                  <div style={{ fontSize: 12, color: "var(--color-text-muted)", paddingTop: 4 }}>
+                    +{deleteTargetProjects.length - 5} more
+                  </div>
+                )}
+              </div>
+            )}
+
+            {deleteError && (
+              <div
+                role="alert"
+                style={{
+                  fontSize: 12,
+                  color: "var(--color-error)",
+                  background: "rgba(239, 68, 68, 0.12)",
+                  border: "1px solid rgba(239, 68, 68, 0.28)",
+                  borderRadius: "var(--radius-md)",
+                  padding: "8px 10px",
+                }}
+              >
+                {deleteError}
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button
+                onClick={closeDeleteDialog}
+                className="btn btn-ghost"
+                style={{ padding: "8px 14px" }}
+                disabled={isDeletingProjects}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteProjects}
+                className="btn btn-ghost"
+                style={{ padding: "8px 14px", color: "var(--color-error)" }}
+                disabled={isDeletingProjects}
+              >
+                {isDeletingProjects ? "Deleting..." : `Delete ${deleteTargetIds.length > 1 ? "Projects" : "Project"}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Settings Modal */}
       {showSettings && (
