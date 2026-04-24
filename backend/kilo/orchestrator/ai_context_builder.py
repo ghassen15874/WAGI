@@ -42,7 +42,33 @@ class AIContextBuilder:
         return {path for path in allowed if path}
 
     def _path_matches_stage(self, rel_path: str, stage_name: str, allowed_paths: set[str]) -> bool:
-        return True
+        normalized = self._normalize_path(rel_path)
+        if not normalized:
+            return False
+
+        if allowed_paths:
+            return normalized in allowed_paths
+
+        stage = str(stage_name or "").strip().lower()
+        if stage == "backend":
+            return normalized.startswith("server/")
+        if stage == "frontend":
+            return normalized.startswith("src/") or normalized in {
+                "index.html",
+                "package.json",
+                "vite.config.ts",
+                "tailwind.config.js",
+                "postcss.config.js",
+            }
+        return normalized.startswith(("src/", "server/")) or normalized in {
+            "index.html",
+            "package.json",
+            "vite.config.ts",
+            "tailwind.config.js",
+            "postcss.config.js",
+            "tsconfig.json",
+            "tsconfig.node.json",
+        }
 
     def build_context(self, stage_name: str = "", focus_paths: list[str] | None = None, compact: bool = False) -> str:
         """
@@ -53,6 +79,7 @@ class AIContextBuilder:
         sandbox_dir = self.project_map.sandbox_dir
         file_inventory = {}
         allowed_paths = self._allowed_paths(stage_name, focus_paths)
+        existing_stage_paths: set[str] = set()
 
         arch_context = ""
         if not compact:
@@ -69,12 +96,13 @@ class AIContextBuilder:
                         continue
                     for file in files:
                         full_path = os.path.join(root, file)
-                        if file.endswith((".ts", ".tsx", ".ts", ".tsx", ".css", ".html", ".json", ".py")):
+                        if file.endswith((".ts", ".tsx", ".css", ".html", ".json", ".py")):
                             try:
                                 with open(full_path, "r", encoding="utf-8") as f:
-                                    rel_path = os.path.relpath(full_path, sandbox_dir)
+                                    rel_path = self._normalize_path(os.path.relpath(full_path, sandbox_dir))
                                     if not self._path_matches_stage(rel_path, stage_name, allowed_paths):
                                         continue
+                                    existing_stage_paths.add(rel_path)
                                     file_inventory[rel_path] = f.read()
                             except Exception:
                                 pass
@@ -85,8 +113,13 @@ class AIContextBuilder:
         # 3. Project Map Context (Dependency Graph)
         map_context = "\n### PROJECT DEPENDENCY GRAPH (ProjectMap)\n"
         for f in self.project_map.data.get("files", []):
-            fname = f.get("relative_path") or f.get("filename")
+            fname = self._normalize_path(f.get("relative_path") or f.get("filename"))
+            if not fname:
+                continue
             if not self._path_matches_stage(fname, stage_name, allowed_paths):
+                continue
+            # Only expose dependency graph entries for files that already exist in sandbox.
+            if fname not in existing_stage_paths and not os.path.exists(os.path.join(sandbox_dir, fname)):
                 continue
             imports = ", ".join(f.get("imports", []))
             api_calls = ", ".join(f.get("api_calls", []))

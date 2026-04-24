@@ -17,18 +17,27 @@ class PlanRepairService:
         seen: set[str] = set()
 
         for err in errors:
-            rel_path = ""
-            parts = str(err or "").split(":", 1)
+            line = str(err or "")
+            candidates: list[str] = []
+
+            parts = line.split(":", 1)
             if len(parts) > 1:
-                rel_path = self._coerce_safe_error_path(parts[0])
-            if not rel_path:
-                for quoted_candidate in re.findall(r"['\"]([^'\"]+)['\"]", str(err or "")):
-                    rel_path = self._coerce_safe_error_path(quoted_candidate)
-                    if rel_path:
-                        break
-            if rel_path and rel_path not in seen:
-                seen.add(rel_path)
-                targets.append(rel_path)
+                candidates.append(parts[0])
+
+            # Capture every quoted path reference (not only the first one).
+            candidates.extend(re.findall(r"['\"]([^'\"]+)['\"]", line))
+
+            # Capture unquoted path-like tokens in messages such as:
+            # "... across a.ts, b.ts, c.ts"
+            candidates.extend(
+                re.findall(r"(?<![A-Za-z0-9_./-])([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+)", line)
+            )
+
+            for candidate in candidates:
+                rel_path = self._coerce_safe_error_path(candidate)
+                if rel_path and rel_path not in seen:
+                    seen.add(rel_path)
+                    targets.append(rel_path)
 
         if targets:
             return targets
@@ -71,6 +80,19 @@ class PlanRepairService:
         return cluster_paths
 
     def determine_retry_batch(self, error_text: str, current_batch: list[str]) -> list[str]:
+        def _dedupe(paths: list[str]) -> list[str]:
+            result: list[str] = []
+            seen_local: set[str] = set()
+            for raw_path in list(paths or []):
+                candidate = str(raw_path or "").strip().replace("\\", "/")
+                if not candidate:
+                    continue
+                if candidate in seen_local:
+                    continue
+                seen_local.add(candidate)
+                result.append(candidate)
+            return result
+
         normalized_current = [
             str(path or "").strip().replace("\\", "/")
             for path in list(current_batch or [])
@@ -97,81 +119,83 @@ class PlanRepairService:
             return normalized_current
 
         message = str(error_text or "")
+        lowered_message = message.lower()
+        is_style_contract_failure = (
+            "styling contract validation failed" in lowered_message
+            or "stylesheet_class_" in lowered_message
+            or "tailwind_runtime_missing" in lowered_message
+        )
+
+        if is_style_contract_failure:
+            seed_paths = extracted_paths or normalized_current
+            retry_candidates: list[str] = []
+            retry_candidates.extend(seed_paths)
+            retry_candidates.extend(self.planning.get_cluster_for_paths(seed_paths))
+
+            style_owners = [
+                "src/styles/global.css",
+                "src/styles/variables.css",
+                "src/styles/globals.css",
+            ]
+            if "tailwind_runtime_missing" in lowered_message:
+                style_owners.extend(
+                    [
+                        "package.json",
+                        "tailwind.config.js",
+                        "tailwind.config.cjs",
+                        "tailwind.config.ts",
+                        "postcss.config.js",
+                        "postcss.config.cjs",
+                    ]
+                )
+            for owner in style_owners:
+                retry_candidates.extend(self.planning.get_cluster_for_paths([owner]))
+                retry_candidates.append(owner)
+
+            resolved = _dedupe(retry_candidates)
+            if resolved:
+                return resolved
+
         if "BLUEPRINT_NOT_ENFORCED" in message:
-            cluster_paths = self.planning.get_cluster_for_paths(extracted_paths)
-            cluster_set = {
-                str(path or "").strip().replace("\\", "/").lower().lstrip("./")
-                for path in list(cluster_paths or [])
-                if str(path or "").strip()
-            }
-            scoped = self.planning.build_scoped_blueprint(extracted_paths)
-            current_lookup = {
-                str(path or "").strip().replace("\\", "/").lower().lstrip("./"): path
-                for path in normalized_current
-            }
-            adjacency: dict[str, set[str]] = {}
+            seed_paths = extracted_paths or normalized_current
+            retry_candidates: list[str] = []
+            retry_candidates.extend(seed_paths)
+            retry_candidates.extend(self.planning.get_cluster_for_paths(seed_paths))
+
+            scoped = self.planning.build_scoped_blueprint(seed_paths)
             for relation in list(scoped.get("relationships") or []):
                 if not isinstance(relation, dict):
                     continue
-                source = str(relation.get("source", "") or "").strip().replace("\\", "/").lower().lstrip("./")
-                target = str(relation.get("target", "") or "").strip().replace("\\", "/").lower().lstrip("./")
-                if source not in current_lookup or target not in current_lookup:
-                    continue
-                adjacency.setdefault(source, set()).add(target)
-                adjacency.setdefault(target, set()).add(source)
+                source = self._coerce_safe_error_path(str(relation.get("source", "") or ""))
+                target = self._coerce_safe_error_path(str(relation.get("target", "") or ""))
+                if source:
+                    retry_candidates.append(source)
+                if target:
+                    retry_candidates.append(target)
 
-            queue = [
-                str(path or "").strip().replace("\\", "/").lower().lstrip("./")
-                for path in extracted_paths
-                if str(path or "").strip().replace("\\", "/").lower().lstrip("./") in current_lookup
-            ]
-            seen: set[str] = set()
-            focused_norms: set[str] = set()
-            while queue:
-                node = queue.pop(0)
-                if node in seen:
-                    continue
-                seen.add(node)
-                focused_norms.add(node)
-                for neighbor in sorted(adjacency.get(node, set())):
-                    if neighbor not in seen:
-                        queue.append(neighbor)
-
-            focused_retry = [
-                path
-                for path in normalized_current
-                if str(path or "").strip().replace("\\", "/").lower().lstrip("./") in focused_norms
-            ]
-            seed_norms = {
-                str(path or "").strip().replace("\\", "/").lower().lstrip("./")
-                for path in extracted_paths
-                if str(path or "").strip()
-            }
-            contract_prefixes = (
-                "server/",
-                "src/services/",
-                "src/hooks/",
-                "src/types/",
-                "src/context/",
-                "src/utils/",
-                "src/store/",
-            )
-            focused_retry = [
-                path
-                for path in focused_retry
-                if (
-                    str(path or "").strip().replace("\\", "/").lower().lstrip("./") in seed_norms
-                    or str(path or "").strip().replace("\\", "/").lower().lstrip("./").startswith(contract_prefixes)
+            if any(
+                marker in lowered_message
+                for marker in (
+                    "import_site_error",
+                    "blueprint_export_mismatch",
+                    "schema_sync_error",
+                    "symbol/export drift",
+                    "api_contract_drift",
+                    "api_response_envelope_mismatch",
                 )
-            ]
-            if not focused_retry:
-                focused_retry = [
-                    path
-                    for path in normalized_current
-                    if str(path or "").strip().replace("\\", "/").lower().lstrip("./") in cluster_set
-                ]
-            if focused_retry:
-                return focused_retry
+            ):
+                retry_candidates.extend(
+                    [
+                        "src/types/index.ts",
+                        "src/services/api.ts",
+                        "src/context/AuthContext.tsx",
+                        "server/db/database.ts",
+                    ]
+                )
+
+            resolved = _dedupe(retry_candidates)
+            if resolved:
+                return resolved
 
         if "BLUEPRINT_SCOPE_FAILURE" in message:
             cluster_paths = self.planning.get_cluster_for_paths(extracted_paths)

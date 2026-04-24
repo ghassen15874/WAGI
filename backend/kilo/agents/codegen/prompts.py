@@ -1118,26 +1118,29 @@ def build_stage_system_prompt(
         f"You are an expert full-stack developer working on the `{stage}` stage of a React + Vite + Express + SQLite project.",
         COMMON_STAGE_RULES_TEMPLATE,
     ]
+    full_stack_contract_sections = [
+        BACKEND_STAGE_RULES_TEMPLATE,
+        BACKEND_DB_CONTRACT_RULES_TEMPLATE,
+        FRONTEND_STAGE_RULES_TEMPLATE,
+        build_uupm_workflow_context(uupm_context, "frontend"),
+    ]
 
     if stage == "backend":
         sections.extend([
-            BACKEND_STAGE_RULES_TEMPLATE,
-            BACKEND_DB_CONTRACT_RULES_TEMPLATE,
+            *full_stack_contract_sections,
             build_stage_anti_patterns(design, stage),
             build_design_spec(design, stage),
         ])
     elif stage == "frontend":
         sections.extend([
-            FRONTEND_STAGE_RULES_TEMPLATE,
-            build_uupm_workflow_context(uupm_context, stage),
+            *full_stack_contract_sections,
             build_stage_anti_patterns(design, stage),
             build_design_spec(design, stage),
         ])
     else:
         sections.extend([
             ARCHITECTURE_STAGE_RULES_TEMPLATE,
-            BACKEND_STAGE_RULES_TEMPLATE,
-            BACKEND_DB_CONTRACT_RULES_TEMPLATE,
+            *full_stack_contract_sections,
             build_stage_anti_patterns(design, stage),
             build_design_spec(design, stage),
         ])

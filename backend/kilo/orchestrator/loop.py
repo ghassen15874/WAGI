@@ -17,6 +17,7 @@ import os
 import re
 import hashlib
 import shutil
+import time
 from dataclasses import asdict
 from typing import AsyncIterator, Optional, List, Dict
 
@@ -428,6 +429,15 @@ class AgentLoop:
         if not touches_frontend_surface:
             return normalized_batch
 
+        cfg = dict(getattr(self, "pipeline_config", {}) or {})
+        auto_add_runtime_scaffold = self._read_bool_config(
+            cfg,
+            "builder_auto_add_runtime_scaffold",
+            False,
+        )
+        if not auto_add_runtime_scaffold:
+            return normalized_batch
+
         runtime_ready = False
         try:
             runtime_ready = bool(self.feature_validator._project_has_tailwind_runtime())  # noqa: SLF001
@@ -604,21 +614,12 @@ class AgentLoop:
             or getattr(getattr(self, "provider", None), "provider_name", "")
             or ""
         ).strip().lower()
-
-        # Provider-scoped behavior:
-        # - OpenAI: split into smaller smart batches by default (avoids large-payload truncation)
-        # - DeepSeek: keep full single-batch generation by default
-        # Optional provider-specific overrides:
-        #   builder_single_batch_mode_openai
-        #   builder_single_batch_mode_deepseek
-        if provider_name in {"openai", "deepseek"}:
+        # Force single-batch generation by default for all providers.
+        raw = cfg.get("builder_single_batch_mode", True)
+        if provider_name:
             scoped_key = f"builder_single_batch_mode_{provider_name}"
             if scoped_key in cfg:
                 raw = cfg.get(scoped_key)
-            else:
-                raw = provider_name == "deepseek"
-        else:
-            raw = cfg.get("builder_single_batch_mode", True)
 
         if isinstance(raw, bool):
             return raw
@@ -628,6 +629,32 @@ class AgentLoop:
         if text in {"1", "true", "yes", "on"}:
             return True
         return True
+
+    def _runtime_min_validation_seconds(self) -> int:
+        cfg = dict(getattr(self, "pipeline_config", {}) or {})
+        return max(0, int(cfg.get("runtime_min_validation_seconds", 180) or 180))
+
+    def _backend_runtime_attempt_limit(self) -> int:
+        # Default backend health checks to at least a 3-minute validation window.
+        base_attempts = 20
+        initial_wait = 10
+        retry_wait = 5
+        minimum_window = self._runtime_min_validation_seconds()
+        if minimum_window <= 0:
+            return base_attempts
+        remaining = max(0, minimum_window - initial_wait)
+        extra_attempts = (remaining + retry_wait - 1) // retry_wait
+        return max(base_attempts, 1 + int(extra_attempts))
+
+    def _frontend_preview_attempt_limit(self) -> int:
+        # Default frontend preview probing to at least a 3-minute validation window.
+        base_attempts = 15
+        retry_wait = 2
+        minimum_window = self._runtime_min_validation_seconds()
+        if minimum_window <= 0:
+            return base_attempts
+        attempts = (minimum_window + retry_wait - 1) // retry_wait
+        return max(base_attempts, int(attempts))
 
     def _single_batch_max_files(self) -> int:
         cfg = dict(getattr(self, "pipeline_config", {}) or {})
@@ -914,6 +941,39 @@ class AgentLoop:
     def _extract_blueprint_scope_cluster(self, text: str) -> list[str]:
         return self.repair_service.extract_blueprint_scope_cluster(text)
 
+    def _strict_failed_retry_paths(
+        self,
+        error_text: str,
+        current_batch: list[str],
+    ) -> list[str]:
+        normalized_current = [
+            str(path or "").strip().replace("\\", "/")
+            for path in list(current_batch or [])
+            if str(path or "").strip()
+        ]
+        if not normalized_current:
+            return []
+
+        current_lookup = {
+            path.lower().lstrip("./"): path
+            for path in normalized_current
+        }
+        direct_error_paths = self._extract_phase_error_paths(
+            [line for line in str(error_text or "").splitlines() if line.strip()],
+            [],
+        )
+
+        strict_retry: list[str] = []
+        seen: set[str] = set()
+        for raw_path in direct_error_paths:
+            key = str(raw_path or "").strip().replace("\\", "/").lower().lstrip("./")
+            matched = current_lookup.get(key)
+            if matched and matched not in seen:
+                seen.add(matched)
+                strict_retry.append(matched)
+
+        return strict_retry
+
     def _determine_retry_batch(
         self,
         error_text: str,
@@ -926,20 +986,72 @@ class AgentLoop:
             "builder_retry_only_failed_files",
             True,
         )
+        strict_failed_only_retry = self._read_bool_config(
+            cfg,
+            "builder_retry_strict_failed_only",
+            True,
+        )
+        message = str(error_text or "")
+        lowered_message = message.lower()
+        is_blueprint_contract_failure = (
+            "BLUEPRINT_NOT_ENFORCED" in message
+            or "BLUEPRINT_SCOPE_FAILURE" in message
+        )
+        is_style_contract_failure = (
+            "styling contract validation failed" in lowered_message
+            or "stylesheet_class_" in lowered_message
+            or "tailwind_runtime_missing" in lowered_message
+        )
+        has_connected_blueprint_markers = any(
+            marker in lowered_message
+            for marker in (
+                "import_site_error",
+                "blueprint_export_mismatch",
+                "schema_sync_error",
+                "symbol/export drift",
+                "rewrite the full connected blueprint contract cluster together",
+            )
+        )
+        prefer_cluster_retry = is_style_contract_failure or has_connected_blueprint_markers
+        normalized_current = [
+            str(path or "").strip().replace("\\", "/")
+            for path in list(current_batch or [])
+            if str(path or "").strip()
+        ]
+        if (
+            strict_failed_only_retry
+            and minimal_retry_scope
+            and is_blueprint_contract_failure
+            and not prefer_cluster_retry
+        ):
+            strict_retry = self._strict_failed_retry_paths(error_text, normalized_current)
+            retry = strict_retry or normalized_current
+            if retry and getattr(self, "sandbox_dir", ""):
+                self.planning.record_retry(retry, error_text)
+            return retry
+
         if self._single_batch_mode_enabled():
-            normalized_current = [
-                str(path or "").strip().replace("\\", "/")
-                for path in list(current_batch or [])
-                if str(path or "").strip()
-            ]
+            if "phase gate" in message.lower():
+                retry = self._pending_batch_paths() or normalized_current
+                retry, _guard_note = self._guard_single_batch_paths(
+                    retry,
+                    fallback_cap=int(self.pipeline_config.get("builder_batch_cap", 20) or 20),
+                )
+                if retry and getattr(self, "sandbox_dir", ""):
+                    self.planning.record_retry(retry, error_text)
+                return retry
+
             current_lookup = {
                 path.lower().lstrip("./"): path
                 for path in normalized_current
             }
-            message = str(error_text or "")
-            if minimal_retry_scope and (
+            if (
+                minimal_retry_scope
+                and not prefer_cluster_retry
+                and (
                 "BLUEPRINT_NOT_ENFORCED" in message
                 or "BLUEPRINT_SCOPE_FAILURE" in message
+                )
             ):
                 direct_error_paths = self._extract_phase_error_paths(
                     [line for line in message.splitlines() if line.strip()],
@@ -2187,15 +2299,11 @@ NODE"""
         return has_boot and not has_crash
 
     def _get_backend_start_command(self) -> str:
-        # We favor --watch mode so the server picks up generation changes without full restarts.
-        # This fulfills the "dont close until user get out from chat" requirement.
-        commands = [
-            f"PORT={self.backend_port} npx tsx watch server/index.ts",
-            f"PORT={self.backend_port} ./node_modules/.bin/tsx watch server/index.ts",
-            f"PORT={self.backend_port} npm run server",
-            f"PORT={self.backend_port} node --import tsx server/index.ts",
-        ]
-        return self._background_shell_command(commands, "/tmp/sandbox_server.log")
+        # Use a deterministic backend startup command for every project.
+        return self._background_shell_command(
+            ["node --import tsx server/index.ts"],
+            "/tmp/sandbox_server.log",
+        )
 
     async def _probe_backend_health_via_shell(self, port: int) -> tuple[bool, str]:
         # Check all standard endpoints that a generated Express app may expose.
@@ -2231,10 +2339,21 @@ NODE"""
         return ("HEALTH_OK" in output), output[-800:]
 
     async def _probe_frontend_preview_via_shell(self, port: int) -> tuple[bool, str]:
+        # `npm run dev` may bind to project/default ports when no explicit flags are passed.
+        candidate_ports = []
+        for candidate in (port, 5173, 3000):
+            if candidate and candidate not in candidate_ports:
+                candidate_ports.append(candidate)
+        probe_targets = " ".join(
+            f"http://127.0.0.1:{candidate}/ http://localhost:{candidate}/"
+            for candidate in candidate_ports
+        )
         probe_script = (
             "sh -lc '"
-            f"curl -fsS http://127.0.0.1:{port}/ >/dev/null 2>&1 && echo PREVIEW_OK || "
-            f"(curl -fsS http://localhost:{port}/ >/dev/null 2>&1 && echo PREVIEW_OK || echo PREVIEW_FAIL)"
+            f"for u in {probe_targets}; do "
+            "curl -fsS \"$u\" >/dev/null 2>&1 && echo PREVIEW_OK && exit 0; "
+            "done; "
+            "echo PREVIEW_FAIL"
             "'"
         )
         result = await self.tool_registry.execute(
@@ -2245,13 +2364,11 @@ NODE"""
         return ("PREVIEW_OK" in output), output[-800:]
 
     def _get_frontend_preview_command(self) -> str:
-        commands = [
-            f"npm run dev -- --host 127.0.0.1 --port {self.frontend_port} --strictPort",
-            f"./node_modules/.bin/vite preview --host 127.0.0.1 --port {self.frontend_port}",
-            f"npx vite preview --host 127.0.0.1 --port {self.frontend_port}",
-            f"npm run preview -- --host 127.0.0.1 --port {self.frontend_port}",
-        ]
-        return self._background_shell_command(commands, "/tmp/sandbox_preview.log")
+        # Use a deterministic frontend startup command for every project.
+        return self._background_shell_command(
+            ["npm run dev"],
+            "/tmp/sandbox_preview.log",
+        )
 
     def _kill_common_backend_ports_command(self) -> str:
         secondary_port = self.backend_port + 1
@@ -3076,6 +3193,46 @@ NODE"""
                 )
             return False, "Error: write_batch validation failed\n- No writable files remained after normalization", []
 
+        dropped_validation_paths: Dict[str, set[str]] = {}
+
+        def _drop_files_from_validation_errors(errors: list[str], reason: str) -> list[str]:
+            nonlocal batch_payload
+            if not errors or not batch_payload["files"]:
+                return []
+
+            error_paths = self._extract_phase_error_paths(
+                [str(line or "") for line in errors if str(line or "").strip()],
+                [],
+            )
+            if not error_paths:
+                return []
+
+            current_lookup = {
+                str((item or {}).get("path", "") or "").strip().replace("\\", "/").lower().lstrip("./")
+                for item in list(batch_payload["files"])
+                if str((item or {}).get("path", "") or "").strip()
+            }
+            invalid_norms = {
+                str(path or "").strip().replace("\\", "/").lower().lstrip("./")
+                for path in error_paths
+                if str(path or "").strip().replace("\\", "/").lower().lstrip("./") in current_lookup
+            }
+            if not invalid_norms:
+                return []
+
+            kept: list[dict] = []
+            dropped: list[str] = []
+            for item in list(batch_payload["files"]):
+                path = str((item or {}).get("path", "") or "").strip().replace("\\", "/")
+                normalized = path.lower().lstrip("./")
+                if normalized in invalid_norms:
+                    dropped.append(path)
+                    dropped_validation_paths.setdefault(path, set()).add(reason)
+                    continue
+                kept.append(item)
+            batch_payload["files"] = kept
+            return dropped
+
         syntax_errors: list[str] = []
         for item in batch_payload["files"]:
             syntax_errors.extend(
@@ -3086,13 +3243,48 @@ NODE"""
                 )
             )
         if syntax_errors:
-            return False, "Error: pre-write syntax validation failed\n" + "\n".join(
-                f"- {err}" for err in syntax_errors[:20]
-            ), []
+            dropped_syntax_paths = _drop_files_from_validation_errors(syntax_errors, "syntax")
+            if dropped_syntax_paths and batch_payload["files"]:
+                syntax_errors = []
+                for item in batch_payload["files"]:
+                    syntax_errors.extend(
+                        SyntaxValidator.validate(
+                            item.get("path", ""),
+                            item.get("content", ""),
+                            self.sandbox_dir,
+                        )
+                    )
+            if dropped_syntax_paths and not batch_payload["files"]:
+                return (
+                    False,
+                    "Error: pre-write syntax validation failed\n"
+                    + "\n".join(f"- {path}: syntax validation failed" for path in dropped_syntax_paths[:20]),
+                    [],
+                )
+            if syntax_errors:
+                return False, "Error: pre-write syntax validation failed\n" + "\n".join(
+                    f"- {err}" for err in syntax_errors[:20]
+                ), []
+
+        target_paths = [item["path"] for item in batch_payload["files"]]
         blueprint_errors = self._validate_blueprint_execution_gate(
             batch_payload["files"],
-            target_paths=list(allowed_paths or [item["path"] for item in batch_payload["files"]]),
+            target_paths=target_paths,
         )
+        if blueprint_errors:
+            dropped_blueprint_paths = _drop_files_from_validation_errors(blueprint_errors, "blueprint")
+            if dropped_blueprint_paths and batch_payload["files"]:
+                blueprint_errors = self._validate_blueprint_execution_gate(
+                    batch_payload["files"],
+                    target_paths=[item["path"] for item in batch_payload["files"]],
+                )
+            if dropped_blueprint_paths and not batch_payload["files"]:
+                return (
+                    False,
+                    "Error: blueprint execution validation failed\n"
+                    + "\n".join(f"- {path}: BLUEPRINT_NOT_ENFORCED" for path in dropped_blueprint_paths[:20]),
+                    [],
+                )
         if blueprint_errors:
             return False, "Error: blueprint execution validation failed\n" + "\n".join(
                 f"- {err}" for err in blueprint_errors[:20]
@@ -3100,12 +3292,29 @@ NODE"""
 
         style_errors = self._validate_pre_write_style_gate(
             batch_payload["files"],
-            target_paths=list(allowed_paths or [item["path"] for item in batch_payload["files"]]),
+            target_paths=[item["path"] for item in batch_payload["files"]],
         )
+        if style_errors:
+            dropped_style_paths = _drop_files_from_validation_errors(style_errors, "style")
+            if dropped_style_paths and batch_payload["files"]:
+                style_errors = self._validate_pre_write_style_gate(
+                    batch_payload["files"],
+                    target_paths=[item["path"] for item in batch_payload["files"]],
+                )
+            if dropped_style_paths and not batch_payload["files"]:
+                return (
+                    False,
+                    "Error: styling contract validation failed\n"
+                    + "\n".join(f"- {path}: styling contract validation failed" for path in dropped_style_paths[:20]),
+                    [],
+                )
         if style_errors:
             return False, "Error: styling contract validation failed\n" + "\n".join(
                 f"- {err}" for err in style_errors[:20]
             ), []
+
+        if not batch_payload["files"]:
+            return False, "Error: write_batch validation failed\n- No writable files remained after contract filtering", []
 
         result = await self.tool_registry.execute("write_batch", batch_payload)
         result_text = str(result or "")
@@ -3129,6 +3338,18 @@ NODE"""
                 "\nℹ️ Dropped out-of-scope files from this write batch: "
                 + ", ".join(dropped_out_of_scope[:8])
                 + ("..." if len(dropped_out_of_scope) > 8 else "")
+            )
+            result_text = f"{result_text}{suffix}"
+
+        if dropped_validation_paths:
+            dropped_entries = [
+                f"{path} ({'/'.join(sorted(reasons))})"
+                for path, reasons in sorted(dropped_validation_paths.items())
+            ]
+            suffix = (
+                "\nℹ️ Dropped contract-invalid files from this write batch: "
+                + ", ".join(dropped_entries[:8])
+                + ("..." if len(dropped_entries) > 8 else "")
             )
             result_text = f"{result_text}{suffix}"
 
@@ -3340,7 +3561,7 @@ NODE"""
                 current_batch = list(self.retry_batch_override or self.planner.get_smart_batch(batch_cap=batch_cap))
             current_batch = self._augment_batch_with_runtime_scaffold(
                 current_batch,
-                batch_cap=batch_cap,
+                batch_cap=None if single_batch_mode else batch_cap,
             )
             self._save_resume_state(original_prompt=original_prompt, iteration=iteration, design=design)
             async for t in self._type(f"\n⚙️  Iteration {iteration + 1}/{self.max_iter}...\n"): yield t
@@ -4863,7 +5084,10 @@ NODE"""
                 last_backend_error_log = ""
                 _isolation_skip_count = 0
                 _max_isolation_waits = 3
-                for attempt in range(1, 21):
+                minimum_runtime_validation_seconds = self._runtime_min_validation_seconds()
+                backend_health_started_at = time.monotonic()
+                max_backend_attempts = self._backend_runtime_attempt_limit()
+                for attempt in range(1, max_backend_attempts + 1):
                     # Give the tsx/node server extra time on first attempt — TypeScript transpilation
                     # via tsx can take 8-12 s. Subsequent retries use the standard 5 s interval.
                     await asyncio.sleep(10 if attempt == 1 else 5)
@@ -4894,7 +5118,9 @@ NODE"""
                         break
 
                     last_backend_error_log = error_log
-                    async for t in self._type(f"⚠️  Backend health check failed (Attempt {attempt}/20).\n"): yield t
+                    async for t in self._type(
+                        f"⚠️  Backend health check failed (Attempt {attempt}/{max_backend_attempts}).\n"
+                    ): yield t
                     # Also read the actual server log to surface real crash info to the user
                     srv_log_content = await self.tool_registry.execute("execute_command", {
                         "command": "tail -n 30 /tmp/sandbox_server.log 2>/dev/null || echo '(empty server log)'",
@@ -4925,6 +5151,17 @@ NODE"""
                             error_log = str(log_content)
                             # skip the false-negative bypass, go straight to self-heal
                         else:
+                            elapsed_seconds = int(time.monotonic() - backend_health_started_at)
+                            if (
+                                minimum_runtime_validation_seconds > 0
+                                and elapsed_seconds < minimum_runtime_validation_seconds
+                            ):
+                                async for t in self._type(
+                                    "ℹ️  Boot markers found but health probe still cannot reach backend. "
+                                    f"Keeping runtime validation alive ({elapsed_seconds}s/{minimum_runtime_validation_seconds}s minimum).\n"
+                                ): yield t
+                                await asyncio.sleep(3)
+                                continue
                             _isolation_skip_count += 1
                             if _isolation_skip_count <= _max_isolation_waits:
                                 async for t in self._type(
@@ -5058,7 +5295,8 @@ NODE"""
 
                     preview_ready = False
                     preview_probe_excerpt = ""
-                    for preview_attempt in range(1, 16):
+                    max_preview_attempts = self._frontend_preview_attempt_limit()
+                    for preview_attempt in range(1, max_preview_attempts + 1):
                         ready, probe_log = await self._probe_frontend_preview_via_shell(self.frontend_port)
                         if ready:
                             preview_ready = True
