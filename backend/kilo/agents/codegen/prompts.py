@@ -1106,17 +1106,106 @@ def build_project_spec_prompt_context(project_spec: Any | None, stage_name: str 
     return "\n".join(lines)
 
 
+def build_global_contract_prompt_context(global_contract: dict | None, stage_name: str = "full") -> str:
+    contract = dict(global_contract or {})
+    if not contract:
+        return ""
+
+    stage = str(stage_name or "full").strip().lower()
+    lines = ["## GLOBAL BUILDER CONTRACT (NON-NEGOTIABLE)"]
+
+    layout = dict(contract.get("layout") or {})
+    routing = dict(contract.get("routing") or {})
+    theme = dict(contract.get("theme") or {})
+    styles = dict(contract.get("styles") or {})
+    batching = dict(contract.get("batching") or {})
+    runtime_smoke = dict(contract.get("runtime_smoke") or {})
+
+    if stage in {"architecture", "frontend", "full"} and bool(layout.get("require_canonical_shell", False)):
+        app_kinds = [
+            str(kind).strip()
+            for kind in list(layout.get("enforce_for_app_kinds") or [])
+            if str(kind).strip()
+        ]
+        required_parts = [
+            str(part).strip()
+            for part in list(layout.get("required_shell_parts") or [])
+            if str(part).strip()
+        ]
+        lines.append(
+            "Layout: use one canonical app shell for app-like products"
+            + (f" (app kinds: {', '.join(app_kinds)})" if app_kinds else "")
+            + "."
+        )
+        if required_parts:
+            lines.append("Shell parts required: " + ", ".join(required_parts))
+
+    if stage in {"architecture", "frontend", "full"}:
+        if bool(routing.get("nav_targets_must_exist", True)):
+            lines.append("Routing: every Link/NavLink/navigate target must exist in router declarations.")
+        if bool(routing.get("wildcard_route_required", True)):
+            lines.append("Routing: include a wildcard route fallback (path='*').")
+
+    if stage in {"architecture", "frontend", "full"}:
+        storage_key = str(theme.get("storage_key", "theme") or "theme").strip() or "theme"
+        if bool(theme.get("must_toggle_root_class", True)):
+            lines.append("Theme: toggle must update document.documentElement.classList.")
+        if bool(theme.get("must_restore_on_boot", True)):
+            lines.append(f"Theme: persist/restore preference via localStorage key '{storage_key}'.")
+
+    if stage in {"architecture", "frontend", "full"}:
+        token_file = str(styles.get("required_token_file", "src/styles/variables.css") or "src/styles/variables.css").strip()
+        required_tokens = [
+            str(token).strip()
+            for token in list(styles.get("required_tokens") or [])
+            if str(token).strip()
+        ]
+        lines.append(f"Styles: required token source file is '{token_file}'.")
+        if required_tokens:
+            lines.append("Styles: required design tokens: " + ", ".join(required_tokens))
+
+    if stage in {"architecture", "backend", "full"}:
+        lines.append("Backend: SQL queries must match schema/tables defined in server/db/database.ts exactly.")
+
+    if stage in {"architecture", "full"} and bool(batching.get("validate_connected_cluster", True)):
+        lines.append(
+            "Batching: keep writes constrained, but regenerate/validate connected file clusters together."
+        )
+
+    if stage in {"architecture", "frontend", "backend", "full"}:
+        min_seconds = int(runtime_smoke.get("min_validation_seconds", 180) or 180)
+        required_routes = [
+            str(route).strip()
+            for route in list(runtime_smoke.get("required_routes") or [])
+            if str(route).strip()
+        ]
+        required_api = [
+            str(route).strip()
+            for route in list(runtime_smoke.get("required_api") or [])
+            if str(route).strip()
+        ]
+        lines.append(f"Runtime smoke: validate for at least {max(0, min_seconds)} seconds before pass.")
+        if required_routes:
+            lines.append("Runtime smoke routes: " + ", ".join(required_routes))
+        if required_api:
+            lines.append("Runtime smoke APIs: " + ", ".join(required_api))
+
+    return "\n".join(lines)
+
+
 def build_stage_system_prompt(
     design: DesignSystem,
     stage_name: str,
     sandbox_dir: str = "",
     uupm_context: dict | None = None,
+    global_contract: dict | None = None,
     scraper: bool = False,
 ) -> str:
     stage = str(stage_name or "architecture").strip().lower()
     sections = [
         f"You are an expert full-stack developer working on the `{stage}` stage of a React + Vite + Express + SQLite project.",
         COMMON_STAGE_RULES_TEMPLATE,
+        build_global_contract_prompt_context(global_contract, stage),
     ]
     full_stack_contract_sections = [
         BACKEND_STAGE_RULES_TEMPLATE,
@@ -1297,7 +1386,12 @@ def build_generation_user_prompt(
     return "\n\n".join(part for part in prompt_parts if str(part or "").strip())
 
 
-def get_system_prompt(design: DesignSystem, sandbox_dir: str = "", uupm_context: dict | None = None) -> str:
+def get_system_prompt(
+    design: DesignSystem,
+    sandbox_dir: str = "",
+    uupm_context: dict | None = None,
+    global_contract: dict | None = None,
+) -> str:
     """Standard XML-based system prompt."""
     design_spec = build_design_spec(design)
     anti_patterns = build_anti_patterns(design)
@@ -1307,14 +1401,20 @@ def get_system_prompt(design: DesignSystem, sandbox_dir: str = "", uupm_context:
             "You are an expert full-stack developer.",
             MANDATORY_FILES_TEMPLATE.strip(),
             STRICT_GENERATION_RULES_TEMPLATE.strip(),
+            build_global_contract_prompt_context(global_contract, "full").strip(),
             uupm_workflow.strip(),
             anti_patterns.strip(),
             design_spec.strip(),
         ]
     )
 
-def build_system_prompt(design: DesignSystem, sandbox_dir: str = "", uupm_context: dict | None = None) -> str:
-    return get_system_prompt(design, sandbox_dir, uupm_context)
+def build_system_prompt(
+    design: DesignSystem,
+    sandbox_dir: str = "",
+    uupm_context: dict | None = None,
+    global_contract: dict | None = None,
+) -> str:
+    return get_system_prompt(design, sandbox_dir, uupm_context, global_contract)
 
 def get_scraper_prompt(design: DesignSystem, uupm_context: dict | None = None) -> str:
     """Markdown format for scraper models. Uses 'ticks' to prevent truncation."""

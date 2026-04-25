@@ -1,0 +1,54 @@
+{
+  "layout": {
+    "require_canonical_shell": true,
+    "required_shell_parts": [
+      "sidebar",
+      "topbar",
+      "main_outlet"
+    ],
+    "enforce_for_app_kinds": [
+      "dashboard",
+      "web_app",
+      "webapp",
+      "admin_portal"
+    ]
+  },
+  "routing": {
+    "nav_targets_must_exist": true,
+    "wildcard_route_required": true
+  },
+  "theme": {
+    "storage_key": "theme",
+    "must_toggle_root_class": true,
+    "must_restore_on_boot": true
+  },
+  "styles": {
+    "required_token_file": "src/styles/variables.css",
+    "required_global_css": "src/styles/global.css",
+    "required_tokens": [
+      "--color-primary",
+      "--color-background",
+      "--color-foreground",
+      "--color-border"
+    ]
+  },
+  "backend": {
+    "schema_query_parity_required": true,
+    "db_init_required": true
+  },
+  "batching": {
+    "constrained_batching": true,
+    "validate_connected_cluster": true,
+    "retry_cluster_expansion_on_contract_error": true
+  },
+  "runtime_smoke": {
+    "min_validation_seconds": 180,
+    "required_routes": [
+      "/"
+    ],
+    "required_api": [
+      "/api/health"
+    ],
+    "require_theme_toggle_check": true
+  }
+}

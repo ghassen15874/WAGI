@@ -195,28 +195,57 @@ class BackendFixEngine:
 
     def _fix_port(self, context: dict) -> list:
         """
-        Patch server/index.ts to use process.env.PORT || 5000 instead of a hardcoded port.
+        Patch server/index.ts to use process.env.PORT with a 3001 fallback.
         """
         index_path = os.path.join(self.sandbox_dir, "server", "index.ts")
         if not os.path.exists(index_path):
             return []
+        raw_port = str((context or {}).get("backend_port", "3001") or "3001").strip()
+        try:
+            target_port = str(int(raw_port))
+        except Exception:
+            target_port = "3001"
         try:
             with open(index_path, "r", encoding="utf-8") as f:
                 content = f.read()
-            # Replace app.listen(...) → app.listen(process.env.PORT || 3001, ...)
+
+            patched = content
             patched = re.sub(
-                r"app\.listen\(\d+,",
-                "app.listen(process.env.PORT || 3001,",
-                content,
+                r"(process\.env\.PORT\s*\|\|\s*)\d+",
+                rf"\g<1>{target_port}",
+                patched,
+            )
+            patched = re.sub(
+                r"(process\.env\.PORT\s*\?\?\s*)\d+",
+                rf"\g<1>{target_port}",
+                patched,
+            )
+            patched = re.sub(
+                r"app\.listen\(\s*\d+\s*,",
+                f"app.listen(Number(process.env.PORT || {target_port}),",
+                patched,
                 count=1,
             )
+            patched = re.sub(
+                r"app\.listen\(\s*\d+\s*\)",
+                f"app.listen(Number(process.env.PORT || {target_port}))",
+                patched,
+                count=1,
+            )
+            patched = re.sub(
+                r"\b(const|let|var)\s+(PORT|port)\s*=\s*\d+\s*;",
+                rf"\1 \2 = Number(process.env.PORT || {target_port});",
+                patched,
+                count=1,
+            )
+
             if patched == content:
                 return []  # no change needed
             return [{
                 "type":    "update",
                 "file":    "server/index.ts",
                 "content": patched,
-                "note":    "Patched app.listen() to use process.env.PORT",
+                "note":    f"Patched server port handling to process.env.PORT with fallback {target_port}",
             }]
         except Exception as exc:
             logger.warning(f"[BackendFixEngine] _fix_port failed: {exc}")

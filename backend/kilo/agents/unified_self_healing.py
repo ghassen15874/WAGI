@@ -739,7 +739,7 @@ class UnifiedSelfHealing:
                         yield "ℹ️ Query-only triage indicated no file rewrite is needed right now.\n"
                         return
                     if decision.get("target_files"):
-                        broken_file = decision["target_files"][0]
+                        broken_file = ", ".join(decision["target_files"])
 
                 yield f"  ↳ Strategy: {analysis['type']} (Target: {broken_file})\n"
 
@@ -883,7 +883,8 @@ class UnifiedSelfHealing:
                 phase_context=self._combined_phase_context("runtime phase: backend"),
                 target_file_hint=self._target_hint_from_error_log(current_log, broken_file),
             )
-            target = (decision.get("target_files") or [broken_file])[0]
+            target_list = decision.get("target_files") or [broken_file]
+            target = ", ".join(target_list)
             
             yield f"  ↳ Detected: {decision.get('strategy', 'Unknown')} on {target}\n"
             
@@ -902,7 +903,8 @@ class UnifiedSelfHealing:
             for message in procedure_messages:
                 yield f"  {message}" if not message.startswith("  ") else message
 
-            target = (decision.get("target_files") or [broken_file])[0]
+            target_list = decision.get("target_files") or [broken_file]
+            target = ", ".join(target_list)
             if self._is_dependency_install_decision(decision):
                 yield f"  ✅ Dependency installed ({decision.get('command')}). Restarting backend for re-validation...\n"
             elif self._is_source_edit_decision(decision):

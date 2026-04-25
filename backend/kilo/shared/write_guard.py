@@ -575,6 +575,42 @@ def normalize_generated_file_content(path: str, content: str) -> tuple[str, list
                 normalized_content = updated
                 notes.append("vite.config.ts: injected missing preview block with /api proxy")
 
+    if normalized_path == "server/index.ts":
+        fixed = normalized_content
+        fixed = re.sub(
+            r"(process\.env\.PORT\s*\|\|\s*)\d+",
+            rf"\g<1>{_DEFAULT_BACKEND_PROXY_PORT}",
+            fixed,
+        )
+        fixed = re.sub(
+            r"(process\.env\.PORT\s*\?\?\s*)\d+",
+            rf"\g<1>{_DEFAULT_BACKEND_PROXY_PORT}",
+            fixed,
+        )
+        fixed = re.sub(
+            r"\b(const|let|var)\s+(PORT|port)\s*=\s*\d+\s*;",
+            rf"\1 \2 = Number(process.env.PORT || {_DEFAULT_BACKEND_PROXY_PORT});",
+            fixed,
+            count=1,
+        )
+        fixed = re.sub(
+            r"app\.listen\(\s*\d+\s*,",
+            f"app.listen(Number(process.env.PORT || {_DEFAULT_BACKEND_PROXY_PORT}),",
+            fixed,
+            count=1,
+        )
+        fixed = re.sub(
+            r"app\.listen\(\s*\d+\s*\)",
+            f"app.listen(Number(process.env.PORT || {_DEFAULT_BACKEND_PROXY_PORT}))",
+            fixed,
+            count=1,
+        )
+        if fixed != normalized_content:
+            normalized_content = fixed
+            notes.append(
+                "server/index.ts: normalized backend listen/default port handling to process.env.PORT with fallback 3001"
+            )
+
     if normalized_path == "src/styles/variables.css":
         normalized_content, token_notes = _ensure_mandatory_design_tokens(normalized_content)
         notes.extend(token_notes)

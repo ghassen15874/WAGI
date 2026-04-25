@@ -1267,6 +1267,7 @@ def compile_file_blueprint(project_spec: ProjectSpec) -> list[dict[str, Any]]:
     server_entry_api_provided = ["GET /api/health"]
 
     site_like_kinds = {"website", "landing_page", "blog", "portfolio", "ecommerce", "marketplace", "business_site"}
+    app_shell_kinds = {"dashboard", "web_app", "webapp", "admin_portal"}
     has_home = any(page.route == "/" for page in project_spec.pages)
     if has_home and project_spec.app_kind in site_like_kinds:
         add_file("src/components/Hero.tsx", batch_name="batch_ui", exports=["default"], depends_on=["src/styles/variables.css"])
@@ -1274,6 +1275,10 @@ def compile_file_blueprint(project_spec: ProjectSpec) -> list[dict[str, Any]]:
         add_file("src/components/Navbar.tsx", batch_name="batch_ui", exports=["default"], depends_on=["src/App.tsx"])
     if project_spec.app_kind in site_like_kinds:
         add_file("src/components/Footer.tsx", batch_name="batch_ui", exports=["default"], depends_on=["src/App.tsx"])
+    if project_spec.app_kind in app_shell_kinds:
+        add_file("src/components/AppShell.tsx", batch_name="batch_ui", exports=["default"])
+        add_file("src/components/Sidebar.tsx", batch_name="batch_ui", exports=["default"], depends_on=["src/components/AppShell.tsx"])
+        add_file("src/components/TopBar.tsx", batch_name="batch_ui", exports=["default"], depends_on=["src/components/AppShell.tsx"])
 
     if project_spec.auth.enabled:
         auth_api_endpoints = project_spec.auth_api_endpoints()
@@ -1510,6 +1515,11 @@ def compile_file_blueprint(project_spec: ProjectSpec) -> list[dict[str, Any]]:
                     add_dep(project_link.get("hook", ""))
                     add_dep(project_link.get("component", ""))
 
+        elif project_spec.app_kind in app_shell_kinds:
+            add_dep("src/components/AppShell.tsx")
+            add_dep("src/components/Sidebar.tsx")
+            add_dep("src/components/TopBar.tsx")
+
         home_like_page = page.route == "/" and project_spec.app_kind in {"blog", "ecommerce", "marketplace", "website"}
         for singular, resource_files in resource_frontend_links.items():
             slug = str(resource_files.get("slug", "") or "")
@@ -1559,5 +1569,10 @@ def compile_file_blueprint(project_spec: ProjectSpec) -> list[dict[str, Any]]:
         depends_on=server_entry_depends_on,
         api_endpoints_provided=server_entry_api_provided,
     )
+    if project_spec.app_kind in app_shell_kinds:
+        merge_file_contract(
+            "src/App.tsx",
+            depends_on=["src/components/AppShell.tsx"],
+        )
 
     return files

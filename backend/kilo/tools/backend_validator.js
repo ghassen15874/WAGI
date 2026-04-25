@@ -258,7 +258,7 @@ async function runBackendValidation(targetDir) {
     }
 
     // TCP port verification
-    const FALLBACK_PORTS = [3001, 3002, 5000, 8000, 8080];
+    const FALLBACK_PORTS = [3001, 3002, 8000, 8080];
     const portsToCheck = detectedPort
         ? [detectedPort, ...FALLBACK_PORTS.filter(p => p !== detectedPort)]
         : FALLBACK_PORTS;

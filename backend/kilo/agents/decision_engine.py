@@ -299,11 +299,11 @@ class DecisionEngine:
                     "This usually means preview/dev proxy wiring is wrong or the backend route is not mounted."
                 ),
                 "fix_hint":     (
-                    "Keep the frontend on port 3000 and the backend on port 3001. "
+                    f"Keep the frontend on port 3000 and the backend on port {self.backend_port}. "
                     "Ensure vite.config.ts defines BOTH server.proxy and preview.proxy for '/api' targeting "
-                    "'http://localhost:3001'. Ensure src/services/api.ts uses baseURL '/api'. "
+                    f"'http://localhost:{self.backend_port}'. Ensure src/services/api.ts uses baseURL '/api'. "
                     "If the failing URL is /api/auth/*, verify server/index.ts mounts app.use('/api/auth', authRoutes). "
-                    "Do NOT change the backend port to 3000."
+                    "Do NOT change the backend port to 3000 or 5000."
                 ),
                 "source":       "rule",
             })
@@ -597,7 +597,7 @@ class DecisionEngine:
             error_excerpt,
             "## ESTABLISHED NETWORK PORTS",
             f"- Backend Server (API): PORT {self.backend_port} (Always use http://localhost:{self.backend_port} for triage probes)",
-            "- Frontend Dev Server: PORT 5173",
+            "- Frontend Dev/Preview Server: PORT 3000",
         ]
         if ast_summary:
             sections += ["## AST SUMMARY", ast_summary[:1500]]
@@ -662,7 +662,8 @@ class DecisionEngine:
                 "- If you need to run a dependency install command, the strategy should clearly indicate dependency repair.\n"
                 "- ONE PASS POLICY: If you are fixing a build or runtime error, aim to fix ALL related issues in the target files in one go. Do not fix one field and then wait for the next error.\n"
                 "- ESM ONLY: files under server/ MUST be 100% ESM.\n"
-                "- ESTABLISHED PORTS: Backend is at PORT 3001. Frontend is at PORT 3000.\n"
+                f"- ESTABLISHED PORTS: Backend is at PORT {self.backend_port}. Frontend is at PORT 3000.\n"
+                "- NEVER rewrite backend listen defaults to 5000 in this pipeline.\n"
             ),
         ]
 

@@ -42,6 +42,7 @@ from .project_map import ProjectMapManager
 from .ai_context_builder import AIContextBuilder
 from .error_analyzer import ErrorAnalyzer
 from .feature_validator import FeatureValidator
+from .global_contract import load_global_contract
 from .planning_service import PlanningService
 from .project_spec import _pascal, _singular_slug, _slug
 from .repair_service import PlanRepairService
@@ -196,6 +197,8 @@ class AgentLoop:
 
         # ── Runtime / Self-Healing flags ────────────────────────────────────
         self.pipeline_config = pipeline_config or {}
+        self.global_contract = load_global_contract(self.sandbox_dir, self.pipeline_config)
+        self.pipeline_config["_global_contract"] = self.global_contract
         
         self.clear_sandbox_enabled = self.pipeline_config.get("clear_sandbox_enabled", True)
         self.design_system_enabled = self.pipeline_config.get("design_system_enabled", True)
@@ -232,7 +235,11 @@ class AgentLoop:
         self.project_map = ProjectMapManager(self.sandbox_dir)
         self.analyzer = ProjectAnalyzer()
         self.context_builder = AIContextBuilder(self.project_map)
-        self.feature_validator = FeatureValidator(self.sandbox_dir, backend_port=self.backend_port)
+        self.feature_validator = FeatureValidator(
+            self.sandbox_dir,
+            backend_port=self.backend_port,
+            global_contract=self.global_contract,
+        )
         self.phase_runtime_ready = self._phase_runtime_dependencies_ready()
 
         self.stage_providers = {}
@@ -389,7 +396,15 @@ class AgentLoop:
             return current_batch
 
         unit_paths = [t.path for t in self.planner._tasks if t.unit_id in unit_ids]
-        return sorted(list(set(current_batch) | set(unit_paths)))
+        
+        dynamic_hubs = [
+            "src/types/index.ts",
+            "src/types/index.d.ts",
+            "server/db/database.ts",
+            "src/services/api.ts"
+        ]
+        
+        return sorted(list(set(current_batch) | set(unit_paths) | set(dynamic_hubs)))
 
     def _augment_batch_with_runtime_scaffold(
         self,
@@ -614,8 +629,10 @@ class AgentLoop:
             or getattr(getattr(self, "provider", None), "provider_name", "")
             or ""
         ).strip().lower()
-        # Force single-batch generation by default for all providers.
-        raw = cfg.get("builder_single_batch_mode", True)
+        contract_batching = dict((self.global_contract or {}).get("batching") or {})
+        constrained_batching = bool(contract_batching.get("constrained_batching", True))
+        default_single_batch = not constrained_batching
+        raw = cfg.get("builder_single_batch_mode", default_single_batch)
         if provider_name:
             scoped_key = f"builder_single_batch_mode_{provider_name}"
             if scoped_key in cfg:
@@ -632,7 +649,17 @@ class AgentLoop:
 
     def _runtime_min_validation_seconds(self) -> int:
         cfg = dict(getattr(self, "pipeline_config", {}) or {})
-        return max(0, int(cfg.get("runtime_min_validation_seconds", 180) or 180))
+        try:
+            contract_min = int(
+                ((self.global_contract or {}).get("runtime_smoke") or {}).get("min_validation_seconds", 180) or 180
+            )
+        except Exception:
+            contract_min = 180
+        raw = cfg.get("runtime_min_validation_seconds", contract_min)
+        try:
+            return max(0, int(raw or 0))
+        except Exception:
+            return max(0, contract_min)
 
     def _backend_runtime_attempt_limit(self) -> int:
         # Default backend health checks to at least a 3-minute validation window.
@@ -933,7 +960,12 @@ class AgentLoop:
                 for item in list(files_to_write or [])
                 if str((item or {}).get("path", "") or "").strip()
             }
-            if (normalized_targets | normalized_written_paths) & runtime_markers:
+            pending_planned_paths = {
+                str(task.path).strip().replace("\\", "/")
+                for task in getattr(self.planner, "_tasks", [])
+                if not getattr(task, "is_done", False) and str(task.path).strip()
+            }
+            if (normalized_targets | normalized_written_paths | pending_planned_paths) & runtime_markers:
                 return []
 
         return errors
@@ -1012,7 +1044,11 @@ class AgentLoop:
                 "rewrite the full connected blueprint contract cluster together",
             )
         )
-        prefer_cluster_retry = is_style_contract_failure or has_connected_blueprint_markers
+        batching_contract = dict((self.global_contract or {}).get("batching") or {})
+        retry_cluster_expansion = bool(batching_contract.get("retry_cluster_expansion_on_contract_error", True))
+        prefer_cluster_retry = retry_cluster_expansion and (
+            is_style_contract_failure or has_connected_blueprint_markers
+        )
         normalized_current = [
             str(path or "").strip().replace("\\", "/")
             for path in list(current_batch or [])
@@ -1113,7 +1149,12 @@ class AgentLoop:
         for path in paths:
             self.planning.mark_pending(path)
 
-    def _run_phase_gates(self, batch_paths: list[str]) -> tuple[list[str], list[str]]:
+    def _run_phase_gates(
+        self,
+        batch_paths: list[str],
+        *,
+        files_to_write: list[dict[str, str]] | None = None,
+    ) -> tuple[list[str], list[str]]:
         if not self.feature_validator_enabled or not self.planner.project_spec:
             return [], []
 
@@ -1122,6 +1163,16 @@ class AgentLoop:
         phases: list[str] = []
         compiled_paths = set(self._compiled_managed_paths())
         is_pure_scaffold_batch = bool(normalized_batch) and all(path in compiled_paths for path in normalized_batch)
+
+        # Collect all files that are still pending in the planner (planned but not yet
+        # written to disk). These are passed to the backend/frontend validators so that
+        # existence checks don't raise false BACKEND_PHASE_MISSING errors for files that
+        # are queued in the same generation round but haven't been flushed yet.
+        pending_planned_paths: set[str] = {
+            str(task.path).strip().replace("\\", "/")
+            for task in getattr(self.planner, "_tasks", [])
+            if not getattr(task, "is_done", False) and str(task.path).strip()
+        }
 
         if any(path in compiled_paths for path in normalized_batch):
             scaffold_errors = self.feature_validator.validate_scaffold_phase(
@@ -1135,14 +1186,37 @@ class AgentLoop:
             return phases, errors
 
         if any(path.startswith("server/") for path in normalized_batch):
-            backend_errors = self.feature_validator.validate_backend_phase(normalized_batch, self.planner.project_spec)
+            backend_errors = self.feature_validator.validate_backend_phase(
+                normalized_batch,
+                self.planner.project_spec,
+                planned_paths=pending_planned_paths,
+            )
             if backend_errors:
                 phases.append("backend")
                 errors.extend(backend_errors)
 
         frontend_prefixes = ("src/pages/", "src/services/", "src/hooks/", "src/context/", "src/components/AdminRoute.tsx")
         if any(path.startswith(frontend_prefixes) or path == "src/components/AdminRoute.tsx" for path in normalized_batch):
-            frontend_errors = self.feature_validator.validate_frontend_phase(normalized_batch, self.planner.project_spec)
+            frontend_errors = self.feature_validator.validate_frontend_phase(
+                normalized_batch,
+                self.planner.project_spec,
+                files_to_write=files_to_write or [],
+            )
+            if frontend_errors:
+                runtime_markers = {
+                    "package.json",
+                    "tailwind.config.js",
+                    "tailwind.config.cjs",
+                    "tailwind.config.ts",
+                    "postcss.config.js",
+                    "postcss.config.cjs",
+                }
+                only_tailwind_runtime_missing = all(
+                    "TAILWIND_RUNTIME_MISSING" in str(err or "")
+                    for err in frontend_errors
+                )
+                if only_tailwind_runtime_missing and (pending_planned_paths & runtime_markers):
+                    frontend_errors = []
             if frontend_errors:
                 phases.append("frontend")
                 errors.extend(frontend_errors)
@@ -2950,8 +3024,15 @@ NODE"""
             normalized_path = str(path or "").strip().lower().lstrip("./").replace("\\", "/")
 
             if expected_set and normalized_path not in expected_set:
-                print(f"Skipping out-of-batch file: {path}")
-                continue
+                is_dynamic_hub = normalized_path in {
+                    "src/types/index.ts",
+                    "src/types/index.d.ts",
+                    "server/db/database.ts",
+                    "src/services/api.ts"
+                }
+                if not is_dynamic_hub:
+                    logging.getLogger(__name__).info("Skipping out-of-batch file: %s", path)
+                    continue
             
             # JS/JSX/TS specific checks
             if path.endswith((".tsx", ".ts")) and len(content) > 200:
@@ -3279,10 +3360,19 @@ NODE"""
                     target_paths=[item["path"] for item in batch_payload["files"]],
                 )
             if dropped_blueprint_paths and not batch_payload["files"]:
+                detail_lines = [
+                    f"- {err}"
+                    for err in blueprint_errors[:20]
+                    if str(err or "").strip()
+                ]
+                if not detail_lines:
+                    detail_lines = [
+                        f"- {path}: BLUEPRINT_NOT_ENFORCED"
+                        for path in dropped_blueprint_paths[:20]
+                    ]
                 return (
                     False,
-                    "Error: blueprint execution validation failed\n"
-                    + "\n".join(f"- {path}: BLUEPRINT_NOT_ENFORCED" for path in dropped_blueprint_paths[:20]),
+                    "Error: blueprint execution validation failed\n" + "\n".join(detail_lines),
                     [],
                 )
         if blueprint_errors:
@@ -3294,20 +3384,33 @@ NODE"""
             batch_payload["files"],
             target_paths=[item["path"] for item in batch_payload["files"]],
         )
+        style_advisory_errors: list[str] = []
         if style_errors:
-            dropped_style_paths = _drop_files_from_validation_errors(style_errors, "style")
-            if dropped_style_paths and batch_payload["files"]:
-                style_errors = self._validate_pre_write_style_gate(
-                    batch_payload["files"],
-                    target_paths=[item["path"] for item in batch_payload["files"]],
-                )
-            if dropped_style_paths and not batch_payload["files"]:
-                return (
-                    False,
-                    "Error: styling contract validation failed\n"
-                    + "\n".join(f"- {path}: styling contract validation failed" for path in dropped_style_paths[:20]),
-                    [],
-                )
+            only_tailwind_runtime_missing = all(
+                "TAILWIND_RUNTIME_MISSING" in str(err or "")
+                for err in style_errors
+            )
+            if only_tailwind_runtime_missing:
+                style_advisory_errors = [
+                    str(err or "").strip()
+                    for err in style_errors
+                    if str(err or "").strip()
+                ]
+                style_errors = []
+            else:
+                dropped_style_paths = _drop_files_from_validation_errors(style_errors, "style")
+                if dropped_style_paths and batch_payload["files"]:
+                    style_errors = self._validate_pre_write_style_gate(
+                        batch_payload["files"],
+                        target_paths=[item["path"] for item in batch_payload["files"]],
+                    )
+                if dropped_style_paths and not batch_payload["files"]:
+                    return (
+                        False,
+                        "Error: styling contract validation failed\n"
+                        + "\n".join(f"- {path}: styling contract validation failed" for path in dropped_style_paths[:20]),
+                        [],
+                    )
         if style_errors:
             return False, "Error: styling contract validation failed\n" + "\n".join(
                 f"- {err}" for err in style_errors[:20]
@@ -3350,6 +3453,15 @@ NODE"""
                 "\nℹ️ Dropped contract-invalid files from this write batch: "
                 + ", ".join(dropped_entries[:8])
                 + ("..." if len(dropped_entries) > 8 else "")
+            )
+            result_text = f"{result_text}{suffix}"
+
+        if style_advisory_errors:
+            advisory_preview = "; ".join(style_advisory_errors[:3])
+            suffix = (
+                "\nℹ️ Style contract warnings were kept as advisory for this write batch: "
+                + advisory_preview
+                + ("..." if len(style_advisory_errors) > 3 else "")
             )
             result_text = f"{result_text}{suffix}"
 
@@ -3520,7 +3632,7 @@ NODE"""
         iteration = max(iteration, int(self.pipeline_config.get("resume_iteration", 0) or 0))
         consecutive_no_tools = 0
         single_batch_mode = self._single_batch_mode_enabled()
-        batch_cap = int(self.pipeline_config.get("builder_batch_cap", 20) or 20)
+        batch_cap = int(self.pipeline_config.get("builder_batch_cap", 0) or 0)
         if single_batch_mode:
             batch_cap = 0
         validation_stall_signature = ""
@@ -3550,12 +3662,12 @@ NODE"""
                     # Respect narrowed retry scope after validation/write rejection.
                     current_batch, single_batch_guard_note = self._guard_single_batch_paths(
                         retry_override,
-                        fallback_cap=int(self.pipeline_config.get("builder_batch_cap", 20) or 20),
+                        fallback_cap=int(self.pipeline_config.get("builder_batch_cap", 0) or 0),
                     )
                 else:
                     current_batch, single_batch_guard_note = self._guard_single_batch_paths(
                         self._pending_batch_paths(),
-                        fallback_cap=int(self.pipeline_config.get("builder_batch_cap", 20) or 20),
+                        fallback_cap=int(self.pipeline_config.get("builder_batch_cap", 0) or 0),
                     )
             else:
                 current_batch = list(self.retry_batch_override or self.planner.get_smart_batch(batch_cap=batch_cap))
@@ -3662,6 +3774,7 @@ NODE"""
                         generation_stage,
                         self.sandbox_dir,
                         uupm_prompt_context,
+                        global_contract=self.global_contract,
                         scraper=is_scraper,
                     )
                 else:
@@ -3867,6 +3980,42 @@ NODE"""
                             self._save_resume_state(original_prompt=original_prompt, iteration=iteration, design=design)
                             continue
 
+                        expected_write_paths: list[str] = []
+                        seen_expected_write_paths: set[str] = set()
+                        for call in write_calls:
+                            candidate = str(call.get("params", {}).get("path", "") or "").strip().replace("\\", "/")
+                            if candidate and candidate not in seen_expected_write_paths:
+                                seen_expected_write_paths.add(candidate)
+                                expected_write_paths.append(candidate)
+
+                        written_lookup = {
+                            str(path or "").strip().replace("\\", "/").lower().lstrip("./")
+                            for path in list(batch_written_paths or [])
+                            if str(path or "").strip()
+                        }
+                        dropped_after_validation = [
+                            path
+                            for path in expected_write_paths
+                            if str(path or "").strip().replace("\\", "/").lower().lstrip("./") not in written_lookup
+                        ]
+                        if dropped_after_validation:
+                            missing_paths = sorted(list(set(missing_paths) | set(dropped_after_validation)))
+                            preview = ", ".join(dropped_after_validation[:8])
+                            if len(dropped_after_validation) > 8:
+                                preview += ", ..."
+                            async for t in self._type(
+                                f"⚠️  Partial write after contract filtering: wrote {len(batch_written_paths)}/{len(expected_write_paths)} files.\n"
+                            ): yield t
+                            if preview:
+                                async for t in self._type(f"ℹ️  Filtered files queued for retry: {preview}\n"): yield t
+
+                        for line in str(batch_result or "").splitlines():
+                            clean = str(line or "").strip()
+                            if not clean:
+                                continue
+                            if clean.startswith("ℹ️"):
+                                async for t in self._type(f"{clean}\n"): yield t
+
                         for path in batch_written_paths:
                             written_paths.add(path)
                             async for t in self._type(f"✓ File written: {path}\n"): yield t
@@ -3874,6 +4023,23 @@ NODE"""
                     for call in other_calls:
                         tool_name = call["tool"]
                         params = call["params"]
+
+                        # During file-generation turns, ignore model-issued shell commands.
+                        # Install/build/test/runtime commands are executed in dedicated
+                        # validation phases after generation is complete.
+                        if tool_name == "execute_command":
+                            allow_generation_commands = self._read_bool_config(
+                                dict(getattr(self, "pipeline_config", {}) or {}),
+                                "builder_allow_generation_commands",
+                                False,
+                            )
+                            generation_incomplete = self.planner.done_count < self.planner.total_count
+                            if generation_incomplete and not allow_generation_commands:
+                                cmd_preview = str(params.get("command", "") or "").strip().splitlines()[0][:80]
+                                async for t in self._type(
+                                    f"ℹ️  Skipping execute_command during generation: {cmd_preview}\n"
+                                ): yield t
+                                continue
 
                         param_desc = params.get("path") or params.get("command") or ""
                         async for t in self._type(f"🛠️  Executing {tool_name}({param_desc[:40]}...)\n"): yield t
@@ -3887,7 +4053,10 @@ NODE"""
                     self.retry_batch_override = []
                     self._clear_generation_failure_state()
 
-                    phase_gate_phases, phase_gate_errors = self._run_phase_gates(list(written_paths) or current_batch)
+                    phase_gate_phases, phase_gate_errors = self._run_phase_gates(
+                        list(written_paths) or current_batch,
+                        files_to_write=[dict(call.get("params") or {}) for call in write_calls],
+                    )
                     if phase_gate_errors:
                         async for t in self._type(
                             f"⚠️ Phase gate blocked progress for this batch ({', '.join(phase_gate_phases)}).\n"
@@ -5291,6 +5460,7 @@ NODE"""
                         provider=self.stage_providers["validation"],
                         model_id=self.stage_model_ids["validation"] or self.model_id,
                         frontend_port=self.frontend_port,
+                        global_contract=self.global_contract,
                     )
 
                     preview_ready = False

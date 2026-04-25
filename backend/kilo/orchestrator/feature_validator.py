@@ -2,6 +2,7 @@ import json
 import os
 import re
 
+from .global_contract import normalize_global_contract
 from .project_schema import canonical_entity_fields, resource_specs
 from .project_spec import ProjectSpec, EntitySpec, _component_name, _pascal, _singular_slug, _slug
 
@@ -24,11 +25,13 @@ class FeatureValidator:
         sandbox_dir: str,
         project_spec: ProjectSpec | None = None,
         backend_port: int = 3001,
+        global_contract: dict | None = None,
     ):
         self.sandbox_dir = sandbox_dir
         self.project_spec = project_spec
         self.backend_port = int(backend_port)
         self.blueprint_items: list[dict[str, object]] = []
+        self.global_contract = normalize_global_contract(global_contract)
 
     def set_project_spec(
         self,
@@ -45,6 +48,13 @@ class FeatureValidator:
     @staticmethod
     def _normalize_rel_path(path: str) -> str:
         return str(path or "").strip().replace("\\", "/").lstrip("./")
+
+    def _contract_section(self, key: str) -> dict:
+        return dict((self.global_contract or {}).get(key) or {})
+
+    def _contract_bool(self, section: str, key: str, default: bool) -> bool:
+        payload = self._contract_section(section)
+        return bool(payload.get(key, default))
 
     def _dedupe_errors(self, errors: list[str]) -> list[str]:
         deduped: list[str] = []
@@ -254,6 +264,11 @@ class FeatureValidator:
         errors: list[str] = []
         for rel_path, content in overlay.items():
             if not rel_path.startswith("server/") or not rel_path.endswith(".ts"):
+                continue
+            # Database ownership files may include richer internal schema/seed columns
+            # than the minimal public blueprint contract. Enforce schema drift on
+            # controllers/routes/services, but allow superset schema in DB bootstrap.
+            if rel_path == "server/db/database.ts":
                 continue
 
             for sql_block in self._extract_sql_blocks_from_content(content):
@@ -605,7 +620,11 @@ class FeatureValidator:
 
         # 1.5. Check direct parity against the planner's ProjectSpec when available.
         errors.extend(self._check_project_spec_parity(registered_routes))
-        errors.extend(self._check_frontend_navigation_targets())
+        if self._contract_bool("routing", "nav_targets_must_exist", True):
+            errors.extend(self._check_frontend_navigation_targets())
+        errors.extend(self._check_router_wildcard_contract())
+        errors.extend(self._check_layout_shell_contract(overlay={}))
+        errors.extend(self._check_theme_toggle_contract(overlay={}))
         
         # 2. Check Frontend Parity
         if auth_required:
@@ -631,18 +650,21 @@ class FeatureValidator:
                         errors.append(f"DISCONNECTED_FEATURE: Backend has route '{route}' but no frontend component appears to call it.")
 
         # 3. Check Database Initialization
-        if has_models:
+        if has_models and self._contract_bool("backend", "db_init_required", True):
              if not self._check_db_initialization():
                  errors.append("DATABASE_UNINITIALIZED: Backend has data models but no database initialization (sqlite/better-sqlite3) found in server entry points.")
         
         # 4. Check Auth API Connectivity
         if auth_required:
             errors.extend(self._check_auth_api_connectivity())
-            errors.extend(self._check_auth_link_state_contract())
-        auth_contract_errors = self._check_auth_response_contract() if auth_required else []
+            errors.extend(self._check_auth_link_state_contract(overlay={}))
+        auth_contract_errors = self._check_auth_response_contract(overlay={}) if auth_required else []
 
         # 5. Check Schema-Controller Column Sync
-        schema_errors = self._check_schema_controller_column_sync()
+        if self._contract_bool("backend", "schema_query_parity_required", True):
+            schema_errors = self._check_schema_controller_column_sync()
+        else:
+            schema_errors = []
         errors.extend(schema_errors)
 
         # 5.5. Check DB adapter / export consistency across backend files
@@ -688,8 +710,8 @@ class FeatureValidator:
 
         # 9. Styling and Dependency Health
         if not (schema_errors or db_contract_errors or api_errors or import_errors or runtime_errors):
-            errors.extend(self._check_frontend_styling_contract())
-            errors.extend(self._check_design_system_tokens())
+            errors.extend(self._check_frontend_styling_contract(overlay={}))
+            errors.extend(self._check_design_system_tokens(overlay={}))
             errors.extend(self._check_essential_libraries())
 
         return self._dedupe_errors(errors)
@@ -927,7 +949,172 @@ class FeatureValidator:
 
         return errors
 
-    def _check_auth_link_state_contract(self) -> list[str]:
+    def _check_router_wildcard_contract(self) -> list[str]:
+        if not self._contract_bool("routing", "wildcard_route_required", True):
+            return []
+
+        app_path = os.path.join(self.sandbox_dir, "src", "App.tsx")
+        if not os.path.exists(app_path):
+            return []
+        try:
+            with open(app_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception:
+            return []
+
+        has_wildcard = bool(
+            re.search(r'path\s*=\s*["\'`]\*["\'`]', content)
+            or re.search(r'path\s*:\s*["\'`]\*["\'`]', content)
+        )
+        if has_wildcard:
+            return []
+        return [
+            "src/App.tsx: FRONTEND_ROUTE_TARGET_MISSING: Global routing contract requires a wildcard route fallback (path='*')."
+        ]
+
+    def _check_theme_toggle_contract(self, overlay: dict[str, str] | None = None) -> list[str]:
+        ov = overlay or {}
+        theme_contract = self._contract_section("theme")
+        must_toggle_root = bool(theme_contract.get("must_toggle_root_class", True))
+        must_restore_on_boot = bool(theme_contract.get("must_restore_on_boot", True))
+        storage_key = str(theme_contract.get("storage_key", "theme") or "theme").strip() or "theme"
+        if not (must_toggle_root or must_restore_on_boot):
+            return []
+
+        src_dir = os.path.join(self.sandbox_dir, "src")
+        if not os.path.isdir(src_dir):
+            return []
+
+        candidate_paths: list[str] = []
+        for root, _dirs, files in os.walk(src_dir):
+            if any(skip in root for skip in ("node_modules", "dist", "build")):
+                continue
+            for file_name in files:
+                if not file_name.endswith((".tsx", ".ts", ".jsx", ".js")):
+                    continue
+                rel = os.path.relpath(os.path.join(root, file_name), self.sandbox_dir).replace("\\", "/")
+                candidate_paths.append(rel)
+
+        aggregate = ""
+        for rel in candidate_paths:
+            aggregate += "\n" + self._read_virtual_file(rel, ov)
+
+        errors: list[str] = []
+        has_root_toggle = bool(
+            re.search(r"document\.documentElement\.classList\.(?:add|remove|toggle)\(", aggregate)
+            or re.search(r"document\.documentElement\.setAttribute\(\s*['\"]data-theme['\"]", aggregate)
+        )
+        has_storage_get = bool(
+            re.search(
+                rf"localStorage\.getItem\(\s*['\"]{re.escape(storage_key)}['\"]\s*\)",
+                aggregate,
+            )
+        )
+        has_storage_set = bool(
+            re.search(
+                rf"localStorage\.setItem\(\s*['\"]{re.escape(storage_key)}['\"]\s*,",
+                aggregate,
+            )
+        )
+
+        if must_toggle_root and not has_root_toggle:
+            errors.append(
+                "src/components/ThemeToggle.tsx: THEME_CONTRACT_ERROR: Theme contract requires toggling document.documentElement.classList or data-theme."
+            )
+
+        if must_restore_on_boot and not (has_storage_get and has_storage_set):
+            errors.append(
+                f"src/components/ThemeToggle.tsx: THEME_CONTRACT_ERROR: Theme contract requires persisting/restoring localStorage key '{storage_key}'."
+            )
+
+        return errors
+
+    def _check_layout_shell_contract(self, overlay: dict[str, str] | None = None) -> list[str]:
+        ov = overlay or {}
+        layout_contract = self._contract_section("layout")
+        if not bool(layout_contract.get("require_canonical_shell", False)):
+            return []
+        if not self.project_spec:
+            return []
+
+        enforced_kinds = {
+            str(item).strip().lower()
+            for item in list(layout_contract.get("enforce_for_app_kinds") or [])
+            if str(item).strip()
+        }
+        app_kind = str(getattr(self.project_spec, "app_kind", "") or "").strip().lower()
+        if enforced_kinds and app_kind not in enforced_kinds:
+            return []
+
+        shell_paths = [
+            "src/components/AppShell.tsx",
+            "src/components/Layout.tsx",
+        ]
+        shell_content = ""
+        active_shell_path = ""
+        for rel_path in shell_paths:
+            full = os.path.join(self.sandbox_dir, rel_path)
+            if rel_path in ov or os.path.exists(full):
+                active_shell_path = rel_path
+                shell_content = self._read_virtual_file(rel_path, ov)
+                break
+
+        app_content = self._read_virtual_file("src/App.tsx", ov)
+        errors: list[str] = []
+
+        if not active_shell_path:
+            errors.append(
+                "src/components/AppShell.tsx: LAYOUT_SHELL_CONTRACT_MISSING: Canonical shell is required for this app kind."
+            )
+            return errors
+
+        if not (
+            ("AppShell" in app_content and "<AppShell" in app_content)
+            or ("Layout" in app_content and "<Layout" in app_content)
+        ):
+            errors.append(
+                "src/App.tsx: LAYOUT_SHELL_CONTRACT_MISSING: App router must render pages through the canonical shell component."
+            )
+
+        required_parts = {
+            str(part).strip().lower()
+            for part in list(layout_contract.get("required_shell_parts") or [])
+            if str(part).strip()
+        }
+        has_sidebar = (
+            "src/components/Sidebar.tsx" in ov
+            or os.path.exists(os.path.join(self.sandbox_dir, "src/components/Sidebar.tsx"))
+            or "Sidebar" in shell_content
+        )
+        has_topbar = (
+            "src/components/TopBar.tsx" in ov
+            or "src/components/Navbar.tsx" in ov
+            or os.path.exists(os.path.join(self.sandbox_dir, "src/components/TopBar.tsx"))
+            or "TopBar" in shell_content
+            or "Navbar" in shell_content
+        )
+        has_main_outlet = bool(
+            re.search(r"<main\b", shell_content)
+            and (re.search(r"<Outlet\b", shell_content) or re.search(r"\{children\}", shell_content))
+        )
+
+        if "sidebar" in required_parts and not has_sidebar:
+            errors.append(
+                f"{active_shell_path}: LAYOUT_SHELL_CONTRACT_MISSING: Shell requires Sidebar integration."
+            )
+        if "topbar" in required_parts and not has_topbar:
+            errors.append(
+                f"{active_shell_path}: LAYOUT_SHELL_CONTRACT_MISSING: Shell requires TopBar/Navbar integration."
+            )
+        if "main_outlet" in required_parts and not has_main_outlet:
+            errors.append(
+                f"{active_shell_path}: LAYOUT_SHELL_CONTRACT_MISSING: Shell must expose a <main> outlet for routed pages."
+            )
+
+        return errors
+
+    def _check_auth_link_state_contract(self, overlay: dict[str, str] | None = None) -> list[str]:
+        ov = overlay or {}
         if not self.project_spec or not self.project_spec.auth.enabled:
             return []
 
@@ -938,7 +1125,7 @@ class FeatureValidator:
         ]
         errors: list[str] = []
         for rel_path in candidate_files:
-            content = self._read_rel_file(rel_path)
+            content = self._read_virtual_file(rel_path, ov)
             if not content:
                 continue
             lowered = content.lower()
@@ -1097,7 +1284,23 @@ class FeatureValidator:
 
         return errors
 
-    def validate_backend_phase(self, target_paths: list[str], project_spec: ProjectSpec | None = None) -> list[str]:
+    def validate_backend_phase(
+        self,
+        target_paths: list[str],
+        project_spec: ProjectSpec | None = None,
+        *,
+        planned_paths: set[str] | None = None,
+    ) -> list[str]:
+        """Validate the backend phase gate.
+
+        Args:
+            target_paths: Paths in the current write batch (already written or being written).
+            project_spec: Overrides self.project_spec when provided.
+            planned_paths: Full set of files that are planned by the planner but not yet on
+                disk. When provided, existence checks treat these paths as known-good so that
+                we don't raise BACKEND_PHASE_MISSING for files that are planned in the same
+                generation round but haven't been written to disk yet.
+        """
         if project_spec is not None:
             self.project_spec = project_spec
         if not self.project_spec:
@@ -1108,6 +1311,25 @@ class FeatureValidator:
             for path in target_paths
             if str(path).strip()
         }
+        # Treat planned-but-not-yet-written paths the same as targeted paths for
+        # existence checks. This prevents false BACKEND_PHASE_MISSING errors when
+        # a controller/route is in the planner queue but not yet flushed to disk.
+        all_known_paths = normalized_targets | {
+            str(path).strip().replace("\\", "/")
+            for path in (planned_paths or set())
+            if str(path).strip()
+        }
+        server_entry_candidates = [
+            "server/index.ts",
+            "server/index.js",
+            "server/server.ts",
+            "server/server.js",
+            "src/server.ts",
+        ]
+        server_entry_exists = any(
+            (candidate in all_known_paths) or self._file_exists(candidate)
+            for candidate in server_entry_candidates
+        )
         errors: list[str] = []
 
         for resource in self.project_spec.api_resources:
@@ -1115,16 +1337,15 @@ class FeatureValidator:
             if controller_path not in normalized_targets and route_path not in normalized_targets:
                 continue
 
-            route_exists_or_targeted = route_path in normalized_targets or self._file_exists(route_path)
-            controller_exists_or_targeted = controller_path in normalized_targets or self._file_exists(controller_path)
-
-            if controller_path in normalized_targets and not self._file_exists(controller_path):
+            route_exists_or_targeted = route_path in all_known_paths or self._file_exists(route_path)
+            controller_exists_or_targeted = controller_path in all_known_paths or self._file_exists(controller_path)
+            if controller_path in normalized_targets and controller_path not in all_known_paths and not self._file_exists(controller_path):
                 errors.append(f"{controller_path}: BACKEND_PHASE_MISSING: Expected controller for '{resource.route}' is missing.")
             if route_path in normalized_targets and not controller_exists_or_targeted:
                 errors.append(f"{controller_path}: BACKEND_PHASE_MISSING: Expected controller for '{resource.route}' is missing.")
-            if controller_path in normalized_targets and route_path in normalized_targets and not self._file_exists(route_path):
+            if controller_path in normalized_targets and route_path in normalized_targets and route_path not in all_known_paths and not self._file_exists(route_path):
                 errors.append(f"{route_path}: BACKEND_PHASE_MISSING: Expected route file for '{resource.route}' is missing.")
-            if route_exists_or_targeted and self._file_exists(route_path) and not self._route_is_mounted_in_backend(resource.route):
+            if route_exists_or_targeted and self._file_exists(route_path) and server_entry_exists and not self._route_is_mounted_in_backend(resource.route):
                 errors.append(f"server/index.ts: BACKEND_PHASE_ROUTE_MISSING: '{resource.route}' is not mounted in the backend entry point.")
 
         auth_targets = {
@@ -1135,20 +1356,20 @@ class FeatureValidator:
         }
         if self.project_spec.auth.enabled and normalized_targets & auth_targets:
             auth_controller_exists_or_targeted = (
-                "server/controllers/authController.ts" in normalized_targets
+                "server/controllers/authController.ts" in all_known_paths
                 or self._file_exists("server/controllers/authController.ts")
             )
             auth_route_exists_or_targeted = (
-                "server/routes/authRoutes.ts" in normalized_targets
+                "server/routes/authRoutes.ts" in all_known_paths
                 or self._file_exists("server/routes/authRoutes.ts")
             )
-            if "server/controllers/authController.ts" in normalized_targets and not self._file_exists("server/controllers/authController.ts"):
+            if "server/controllers/authController.ts" in normalized_targets and "server/controllers/authController.ts" not in all_known_paths and not self._file_exists("server/controllers/authController.ts"):
                 errors.append("server/controllers/authController.ts: BACKEND_PHASE_AUTH_MISSING: Auth controller is missing.")
             if "server/routes/authRoutes.ts" in normalized_targets and not auth_controller_exists_or_targeted:
                 errors.append("server/controllers/authController.ts: BACKEND_PHASE_AUTH_MISSING: Auth controller is missing.")
-            if "server/controllers/authController.ts" in normalized_targets and "server/routes/authRoutes.ts" in normalized_targets and not self._file_exists("server/routes/authRoutes.ts"):
+            if "server/controllers/authController.ts" in normalized_targets and "server/routes/authRoutes.ts" in normalized_targets and "server/routes/authRoutes.ts" not in all_known_paths and not self._file_exists("server/routes/authRoutes.ts"):
                 errors.append("server/routes/authRoutes.ts: BACKEND_PHASE_AUTH_MISSING: Auth route file is missing.")
-            if auth_route_exists_or_targeted and self._file_exists("server/routes/authRoutes.ts") and not self._route_is_mounted_in_backend("/api/auth"):
+            if auth_route_exists_or_targeted and self._file_exists("server/routes/authRoutes.ts") and server_entry_exists and not self._route_is_mounted_in_backend("/api/auth"):
                 errors.append("server/index.ts: BACKEND_PHASE_AUTH_ROUTE_MISSING: '/api/auth' is not mounted in the backend entry point.")
             errors.extend(self._check_auth_response_contract())
 
@@ -1156,6 +1377,23 @@ class FeatureValidator:
         for err in sync_errors:
             if any(path in err for path in normalized_targets):
                 errors.append(err)
+
+        if self._contract_bool("backend", "schema_query_parity_required", True):
+            schema_errors = self._check_schema_controller_column_sync()
+            for err in schema_errors:
+                if any(path in err for path in normalized_targets) or any(
+                    path.startswith("server/controllers/") for path in normalized_targets
+                ):
+                    errors.append(err)
+
+        if self._contract_bool("backend", "db_init_required", True):
+            if (
+                "server/db/database.ts" in normalized_targets
+                or "server/index.ts" in normalized_targets
+            ) and not self._check_db_initialization():
+                errors.append(
+                    "server/index.ts: DATABASE_UNINITIALIZED: Global contract requires DB initialization before serving API routes."
+                )
 
         return errors
 
@@ -1228,23 +1466,39 @@ class FeatureValidator:
 
         return errors
 
-    def _check_design_system_tokens(self) -> list[str]:
-        """Verify that mandatory tokens are present in variables.css."""
+    def _check_design_system_tokens(self, overlay: dict[str, str] | None = None) -> list[str]:
+        """Verify that mandatory style tokens/files exist per the global contract."""
+        ov = overlay or {}
         errors = []
-        vars_path = os.path.join(self.sandbox_dir, "src/styles/variables.css")
-        if not os.path.exists(vars_path):
-            return []
+        styles_contract = self._contract_section("styles")
+        token_file = str(styles_contract.get("required_token_file", "src/styles/variables.css") or "src/styles/variables.css").strip().replace("\\", "/")
+        global_css_file = str(styles_contract.get("required_global_css", "src/styles/global.css") or "src/styles/global.css").strip().replace("\\", "/")
+        mandatory = [
+            str(token).strip()
+            for token in list(styles_contract.get("required_tokens") or [])
+            if str(token).strip()
+        ] or ["--color-primary", "--color-background", "--color-foreground", "--color-border"]
 
-        try:
-            with open(vars_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-        except Exception:
-            return []
+        vars_path = os.path.join(self.sandbox_dir, token_file)
+        if not (token_file in ov or os.path.exists(vars_path)):
+            errors.append(f"{token_file}: DESIGN_SYSTEM_TOKEN_FILE_MISSING: The mandatory style token file is missing.")
+            return errors
 
-        mandatory = ["--background", "--foreground", "--card", "--card-foreground", "--border"]
+        vars_content = self._read_virtual_file(token_file, ov)
         for token in mandatory:
-            if token not in content:
-                errors.append(f"src/styles/variables.css: STYLESHEET_CLASS_INCOMPLETE: Missing mandatory design token '{token}'.")
+            if token not in vars_content:
+                errors.append(
+                    f"{token_file}: DESIGN_SYSTEM_TOKEN_MISSING: Mandatory token '{token}' is not defined."
+                )
+
+        global_path = os.path.join(self.sandbox_dir, global_css_file)
+        if not (global_css_file in ov or os.path.exists(global_path)):
+            errors.append(f"{global_css_file}: DESIGN_SYSTEM_GLOBAL_CSS_MISSING: The mandatory global CSS file is missing.")
+            return errors
+
+        global_content = self._read_virtual_file(global_css_file, ov)
+        if "@tailwind base" not in global_content and self._project_has_tailwind_runtime(ov):
+            errors.append(f"{global_css_file}: DESIGN_SYSTEM_TAILWIND_MISSING: Global CSS must include '@tailwind base' when Tailwind is enabled.")
 
         return errors
 
@@ -1384,11 +1638,29 @@ class FeatureValidator:
 
         return errors
 
-    def validate_frontend_phase(self, target_paths: list[str], project_spec: ProjectSpec | None = None) -> list[str]:
+    def validate_frontend_phase(
+        self,
+        target_paths: list[str],
+        project_spec: ProjectSpec | None = None,
+        files_to_write: list[dict[str, str]] | dict[str, str] | None = None,
+    ) -> list[str]:
         if project_spec is not None:
             self.project_spec = project_spec
         if not self.project_spec:
             return []
+
+        if isinstance(files_to_write, dict):
+            overlay = {
+                self._normalize_rel_path(path): str(content or "")
+                for path, content in files_to_write.items()
+                if self._normalize_rel_path(path)
+            }
+        else:
+            overlay = {
+                self._normalize_rel_path(item.get("path", "")): str(item.get("content", "") or "")
+                for item in list(files_to_write or [])
+                if self._normalize_rel_path((item or {}).get("path", ""))
+            }
 
         normalized_targets = {
             str(path).strip().replace("\\", "/")
@@ -1477,9 +1749,35 @@ class FeatureValidator:
             "src/components/Hero.tsx",
         }
         if normalized_targets & nav_targets:
-            errors.extend(self._check_frontend_navigation_targets())
+            if self._contract_bool("routing", "nav_targets_must_exist", True):
+                errors.extend(self._check_frontend_navigation_targets())
+            errors.extend(self._check_router_wildcard_contract())
             if self.project_spec and self.project_spec.auth.enabled:
-                errors.extend(self._check_auth_link_state_contract())
+                errors.extend(self._check_auth_link_state_contract(overlay=overlay))
+
+        theme_targets = {
+            "src/App.tsx",
+            "src/main.tsx",
+            "src/components/TopBar.tsx",
+            "src/components/ThemeToggle.tsx",
+            "src/styles/variables.css",
+            "src/styles/global.css",
+        }
+        if normalized_targets & theme_targets:
+            errors.extend(self._check_theme_toggle_contract(overlay=overlay))
+            errors.extend(self._check_design_system_tokens(overlay=overlay))
+
+        shell_targets = {
+            "src/App.tsx",
+            "src/components/AppShell.tsx",
+            "src/components/Layout.tsx",
+            "src/components/Sidebar.tsx",
+            "src/components/TopBar.tsx",
+        }
+        if normalized_targets & shell_targets:
+            errors.extend(self._check_layout_shell_contract(overlay=overlay))
+
+        errors.extend(self._check_frontend_styling_contract(overlay=overlay))
 
         return errors
 
@@ -1745,6 +2043,8 @@ class FeatureValidator:
             return True
         if overlay and any(path in overlay for path in config_candidates):
             return True
+        if hasattr(self, "blueprint_paths") and any(path in getattr(self, "blueprint_paths", []) for path in config_candidates):
+            return True
 
         package_json_path = os.path.join(self.sandbox_dir, "package.json")
         package_data = {}
@@ -1866,7 +2166,11 @@ class FeatureValidator:
                     }
                 )
                 unresolved_semantic = sorted(set(missing_semantic) | set(empty_semantic))
-                if len(unresolved_semantic) >= 6:
+                # Only flag if the file is large enough to be a substantial page/section component.
+                # Small utility components (e.g. ThemeToggle, buttons) often reference a handful
+                # of class names that belong to a stylesheet not yet generated in this batch.
+                # Requiring >= 8 total semantic tokens prevents false rejections for tiny components.
+                if len(unresolved_semantic) >= 6 and len(semantic_tokens) >= 8:
                     sample = ", ".join(unresolved_semantic[:6])
                     if empty_semantic and not missing_semantic:
                         issue_code = "STYLESHEET_CLASS_EMPTY"
@@ -1902,8 +2206,12 @@ class FeatureValidator:
             )
         return errors
 
-    def _check_frontend_styling_contract(self) -> list[str]:
-        if self._project_has_tailwind_runtime():
+    def _check_frontend_styling_contract(self, overlay: dict[str, str] | None = None) -> list[str]:
+        ov = overlay or {}
+        if not self.project_spec:
+            return []
+
+        if self._project_has_tailwind_runtime(overlay=ov):
             return []
 
         src_root = os.path.join(self.sandbox_dir, "src")
@@ -1948,6 +2256,25 @@ class FeatureValidator:
             }
 
         if self._project_has_tailwind_runtime(overlay=overlay):
+            return []
+
+        # If the current batch explicitly targets Tailwind scaffold files (package.json,
+        # tailwind.config.*), treat Tailwind as present. The config isn't on disk yet
+        # but the intent to use Tailwind is clear from the planned batch scope.
+        tailwind_scaffold_files = {
+            "package.json",
+            "tailwind.config.js",
+            "tailwind.config.cjs",
+            "tailwind.config.ts",
+            "postcss.config.js",
+            "postcss.config.cjs",
+        }
+        normalized_target_set = {
+            self._normalize_rel_path(path)
+            for path in list(target_paths or [])
+            if self._normalize_rel_path(path)
+        }
+        if normalized_target_set & tailwind_scaffold_files:
             return []
 
         if not overlay and not target_paths:
@@ -2973,7 +3300,8 @@ class FeatureValidator:
             pass
         return errors
 
-    def _check_auth_response_contract(self) -> list:
+    def _check_auth_response_contract(self, overlay: dict[str, str] | None = None) -> list:
+        ov = overlay or {}
         if not self.project_spec or not self.project_spec.auth.enabled:
             return []
 
@@ -2981,18 +3309,18 @@ class FeatureValidator:
         auth_service_path = "src/services/authService.ts"
         auth_state_owner = self.project_spec.auth.state_owner or "src/context/AuthContext.tsx"
 
-        controller_content = self._read_rel_file(controller_path)
+        controller_content = self._read_virtual_file(controller_path, ov)
         if not controller_content:
             return []
-
+        
         frontend_auth_content = "\n".join(
             filter(
                 None,
                 [
-                    self._read_rel_file(auth_service_path),
-                    self._read_rel_file(auth_state_owner),
-                    self._read_rel_file("src/pages/Login.tsx"),
-                    self._read_rel_file("src/pages/Register.tsx"),
+                    self._read_virtual_file(auth_service_path, ov),
+                    self._read_virtual_file(auth_state_owner, ov),
+                    self._read_virtual_file("src/pages/Login.tsx", ov),
+                    self._read_virtual_file("src/pages/Register.tsx", ov),
                 ],
             )
         )

@@ -3,6 +3,7 @@ import os
 import shutil
 import json
 import re
+import shlex
 from pathlib import PurePosixPath
 
 try:
@@ -217,10 +218,22 @@ class ToolRegistry:
         elif tool_name == "browser_check":
             script_path = os.path.join(os.path.dirname(__file__), "browser_check.js")
             frontend_port = int(params.get("frontend_port", 3000) or 3000)
+            required_routes = list(params.get("required_routes", []) or [])
+            required_api = list(params.get("required_api", []) or [])
+            require_theme_toggle = bool(params.get("require_theme_toggle", False))
+            theme_storage_key = str(params.get("theme_storage_key", "theme") or "theme").strip() or "theme"
+
+            env_exports = [
+                f"FRONTEND_PREVIEW_PORT={frontend_port}",
+                f"REQUIRED_ROUTES_JSON={shlex.quote(json.dumps(required_routes))}",
+                f"REQUIRED_API_JSON={shlex.quote(json.dumps(required_api))}",
+                f"REQUIRE_THEME_TOGGLE={'1' if require_theme_toggle else '0'}",
+                f"THEME_STORAGE_KEY={shlex.quote(theme_storage_key)}",
+            ]
             # Run the frontend browser check
             return await self._shell.execute(
-                f"FRONTEND_PREVIEW_PORT={frontend_port} node '{script_path}'",
-                timeout=20,
+                f"{' '.join(env_exports)} node '{script_path}'",
+                timeout=45,
             )
 
         else:

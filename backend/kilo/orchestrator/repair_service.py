@@ -93,6 +93,21 @@ class PlanRepairService:
                 result.append(candidate)
             return result
 
+        def _planned_paths() -> set[str]:
+            planned: set[str] = set()
+            for task in list(getattr(self.planning, "tasks", []) or []):
+                candidate = str(getattr(task, "path", "") or "").strip().replace("\\", "/")
+                if candidate:
+                    planned.add(candidate)
+            return planned
+
+        def _filter_known(paths: list[str], known: set[str]) -> list[str]:
+            filtered: list[str] = []
+            for candidate in _dedupe(paths):
+                if candidate in known:
+                    filtered.append(candidate)
+            return filtered
+
         normalized_current = [
             str(path or "").strip().replace("\\", "/")
             for path in list(current_batch or [])
@@ -100,6 +115,7 @@ class PlanRepairService:
         ]
         if not normalized_current:
             return []
+        known_retry_paths = set(normalized_current) | _planned_paths()
 
         explicit_cluster = self.extract_blueprint_scope_cluster(error_text)
         if explicit_cluster:
@@ -135,7 +151,6 @@ class PlanRepairService:
             style_owners = [
                 "src/styles/global.css",
                 "src/styles/variables.css",
-                "src/styles/globals.css",
             ]
             if "tailwind_runtime_missing" in lowered_message:
                 style_owners.extend(
@@ -152,7 +167,7 @@ class PlanRepairService:
                 retry_candidates.extend(self.planning.get_cluster_for_paths([owner]))
                 retry_candidates.append(owner)
 
-            resolved = _dedupe(retry_candidates)
+            resolved = _filter_known(retry_candidates, known_retry_paths)
             if resolved:
                 return resolved
 
@@ -193,7 +208,7 @@ class PlanRepairService:
                     ]
                 )
 
-            resolved = _dedupe(retry_candidates)
+            resolved = _filter_known(retry_candidates, known_retry_paths)
             if resolved:
                 return resolved
 

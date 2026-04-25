@@ -34,6 +34,7 @@ class RuntimeValidator:
         provider=None,
         model_id: str = "",
         frontend_port: int = 3000,
+        global_contract: dict | None = None,
     ):
         self.sandbox_dir   = sandbox_dir
         self.tool_registry = tool_registry
@@ -41,6 +42,7 @@ class RuntimeValidator:
         self.provider = provider
         self.model_id = model_id
         self.frontend_port = int(frontend_port)
+        self.global_contract = dict(global_contract or {})
         self.logger = logging.getLogger(__name__)
         # Populated by check_missing_ui(); callers can stream this list to the UI
         self._gate_log: list = []
@@ -128,11 +130,32 @@ class RuntimeValidator:
         last_result = None
         last_error = None
 
+        runtime_smoke = dict((self.global_contract or {}).get("runtime_smoke") or {})
+        theme_contract = dict((self.global_contract or {}).get("theme") or {})
+        required_routes = [
+            str(route).strip()
+            for route in list(runtime_smoke.get("required_routes") or [])
+            if str(route).strip()
+        ] or ["/"]
+        required_api = [
+            str(route).strip()
+            for route in list(runtime_smoke.get("required_api") or [])
+            if str(route).strip()
+        ] or ["/api/health"]
+        require_theme_toggle = bool(runtime_smoke.get("require_theme_toggle_check", True))
+        theme_storage_key = str(theme_contract.get("storage_key", "theme") or "theme").strip() or "theme"
+
         for attempt in range(1, max_attempts + 1):
             try:
                 raw_output = await self.tool_registry.execute(
                     "browser_check",
-                    {"frontend_port": self.frontend_port},
+                    {
+                        "frontend_port": self.frontend_port,
+                        "required_routes": required_routes,
+                        "required_api": required_api,
+                        "require_theme_toggle": require_theme_toggle,
+                        "theme_storage_key": theme_storage_key,
+                    },
                 )
                 result = self._parse_json_from_output(raw_output)
                 if not result:

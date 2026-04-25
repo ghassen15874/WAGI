@@ -72,7 +72,23 @@ make db-up
 make db-down
 ```
 
-## 7) Push To GitHub
+## 7) Global Builder Contract
+The builder now enforces one global contract for all generated projects via `global_contract.json`.
+
+What it controls:
+- canonical layout shell + shared tokens
+- route/nav parity + wildcard route requirement
+- theme toggle + persistence contract
+- schema/query parity expectations
+- constrained batching with connected-cluster retries
+- runtime smoke checks (routes, APIs, theme) with a minimum validation window
+
+Override behavior:
+- edit `global_contract.json` at repo root, or
+- set `global_contract_path` in pipeline config, or
+- set `KILO_GLOBAL_CONTRACT_PATH` env var.
+
+## 8) Push To GitHub
 This repo includes a `.gitignore` that excludes:
 - `backend/.env`
 - local logs
@@ -87,7 +103,7 @@ git commit -m "Prepare WAGI for cross-PC setup and deployment"
 git push origin main
 ```
 
-## 8) First-Time GitHub Deploy Checklist
+## 9) First-Time GitHub Deploy Checklist
 - Ensure no secrets in commit history.
 - Keep `.env` out of git (already ignored).
 - Verify app starts using only `./scripts/install.sh` + `./scripts/dev.sh` on a fresh machine.
