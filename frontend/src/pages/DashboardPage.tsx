@@ -12,6 +12,10 @@ import {
   Github,
   Sun,
   Moon,
+  LayoutDashboard,
+  CheckCircle2,
+  Clock,
+  AlertCircle,
 } from "lucide-react";
 import axios from "axios";
 import { useAuth } from "../hooks/useAuth";
@@ -53,6 +57,8 @@ export default function DashboardPage() {
   const [newKeyValue, setNewKeyValue] = useState("");
   const [newKeyLabel, setNewKeyLabel] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [projects, setProjects] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<"statistics" | "profile" | "pipeline" | "provider">("statistics");
   const repoUrl = searchParams.get("repo") || "";
   const githubError = searchParams.get("github_error") || "";
   const { theme, toggleTheme } = useTheme();
@@ -78,12 +84,14 @@ export default function DashboardPage() {
 
   const fetchData = async () => {
     try {
-      const [keysRes, pipeRes] = await Promise.all([
+      const [keysRes, pipeRes, projectsRes] = await Promise.all([
         axios.get("/api/users/api-keys", { headers: { Authorization: `Bearer ${token}` } }),
         axios.get("/api/users/pipeline", { headers: { Authorization: `Bearer ${token}` } }),
+        axios.get("/api/projects", { headers: { Authorization: `Bearer ${token}` } }),
       ]);
       setKeys(keysRes.data.keys);
       setPipeline(pipeRes.data);
+      setProjects(projectsRes.data.projects);
     } catch (err) {
       console.error(err);
     } finally {
@@ -218,9 +226,9 @@ export default function DashboardPage() {
               color: "#fff",
             }}
           >
-            <Rocket size={16} />
+            <Settings size={16} />
           </div>
-          WAGI <span style={{ fontWeight: 400, color: "var(--color-text-muted)" }}>| Dashboard</span>
+          WAGI <span style={{ fontWeight: 400, color: "var(--color-text-muted)" }}>| Settings</span>
         </Link>
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
           <button
@@ -246,219 +254,345 @@ export default function DashboardPage() {
         </div>
       </nav>
 
-      <main style={{ padding: 40, maxWidth: 1100, margin: "0 auto", display: "grid", gap: 24, gridTemplateColumns: "1fr 1fr" }}>
-        {/* GitHub Deployment Card */}
-        <div
-          className="glass"
+      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+        {/* Sidebar */}
+        <aside
           style={{
-            padding: 24,
-            borderRadius: "var(--radius-xl)",
-            gridColumn: "1 / -1",
+            width: 240,
+            background: "var(--color-surface)",
+            borderRight: "1px solid var(--color-border)",
             display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 16,
-            flexWrap: "wrap",
+            flexDirection: "column",
+            padding: "20px 0",
           }}
         >
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ fontSize: 18, fontWeight: 700 }}>GitHub Deployment</div>
-            {repoUrl ? (
-              <>
-                <div style={{ fontSize: 13, color: "var(--color-success)" }}>✅ Project deployed to GitHub</div>
-                <a
-                  href={repoUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ fontSize: 13, color: "var(--color-accent)", textDecoration: "none" }}
-                >
-                  {repoUrl}
-                </a>
-              </>
-            ) : githubError ? (
-              <div style={{ fontSize: 13, color: "var(--color-error)" }}>{githubError}</div>
-            ) : user?.githubConnected ? (
-              <div style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
-                Connected as {user.githubUsername || "GitHub user"}.
-              </div>
-            ) : (
-              <div style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
-                Connect GitHub to create a repository and deploy your latest project.
-              </div>
-            )}
+          <div style={{ padding: "0 24px", marginBottom: 20 }}>
+            <h2 style={{ fontSize: 12, fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Settings
+            </h2>
           </div>
-          <button
-            type="button"
-            onClick={handleConnectGithubDeploy}
-            disabled={githubDeploying}
-            className="btn-primary"
-            style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 20px" }}
-          >
-            {githubDeploying ? <Loader2 size={16} className="animate-spin" /> : <Github size={16} />}
-            Connect GitHub & Deploy
-          </button>
-        </div>
+          <nav style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {[
+              { id: "statistics", label: "Statistics", icon: <LayoutDashboard size={18} /> },
+              { id: "profile", label: "Profile", icon: <User size={18} /> },
+              { id: "pipeline", label: "Pipeline Config", icon: <Settings size={18} /> },
+              { id: "provider", label: "Provider", icon: <Key size={18} /> },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "10px 24px",
+                  border: "none",
+                  background: activeTab === tab.id ? "var(--color-accent-muted)" : "transparent",
+                  color: activeTab === tab.id ? "var(--color-accent)" : "var(--color-text)",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  fontSize: 14,
+                  fontWeight: 500,
+                  transition: "all var(--transition)",
+                  borderLeft: activeTab === tab.id ? "3px solid var(--color-accent)" : "3px solid transparent",
+                }}
+              >
+                {tab.icon} {tab.label}
+              </button>
+            ))}
+          </nav>
+        </aside>
 
-        {/* API Keys Card */}
-        <div className="glass" style={{ padding: 24, borderRadius: "var(--radius-xl)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-            <div
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: "var(--radius-md)",
-                background: "var(--color-accent-muted)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
+        {/* Content */}
+        <main style={{ flex: 1, overflowY: "auto", padding: "40px", background: "var(--color-bg)" }}>
+          <div style={{ maxWidth: 1000, margin: "0 auto" }}>
+            {activeTab === "statistics" && renderStatistics()}
+            {activeTab === "profile" && renderProfile()}
+            {activeTab === "pipeline" && renderPipeline()}
+            {activeTab === "provider" && renderProvider()}
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+
+  function renderStatistics() {
+    const doneCount = projects.filter((p) => p.status === "COMPLETED" || p.status === "SUCCESS").length;
+    const progressCount = projects.filter((p) => p.status === "GENERATING" || p.status === "BUILDING" || (!p.status && p.updated_at)).length;
+    const failedCount = projects.filter((p) => p.status === "FAILED" || p.status === "ERROR").length;
+    const total = doneCount + progressCount + failedCount || 1;
+
+    // SVG Donut Chart Calculation
+    const size = 180;
+    const center = size / 2;
+    const radius = 70;
+    const circumference = 2 * Math.PI * radius;
+
+    const doneOffset = 0;
+    const doneStroke = (doneCount / total) * circumference;
+    const progressStroke = (progressCount / total) * circumference;
+    const failedStroke = (failedCount / total) * circumference;
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
+        <header style={{ marginBottom: 8 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Statistics</h1>
+          <p style={{ color: "var(--color-text-muted)", fontSize: 14 }}>Overview of your project building performance.</p>
+        </header>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 32 }}>
+          {/* Chart Card */}
+          <div className="glass" style={{ padding: 32, borderRadius: "var(--radius-xl)", background: "var(--color-surface)", border: "1px solid var(--color-border)", display: "flex", flexDirection: "column", alignItems: "center", gap: 24 }}>
+            <div style={{ position: "relative", width: size, height: size }}>
+              <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: "rotate(-90deg)" }}>
+                {/* Background circle */}
+                <circle cx={center} cy={center} r={radius} fill="none" stroke="var(--color-border)" strokeWidth="15" />
+                {/* Done segment */}
+                <circle
+                  cx={center} cy={center} r={radius} fill="none" stroke="var(--color-success)" strokeWidth="15"
+                  strokeDasharray={`${doneStroke} ${circumference - doneStroke}`}
+                  strokeDashoffset={0}
+                  strokeLinecap="round"
+                  style={{ transition: "stroke-dasharray 0.5s ease" }}
+                />
+                {/* Progress segment */}
+                <circle
+                  cx={center} cy={center} r={radius} fill="none" stroke="var(--color-accent)" strokeWidth="15"
+                  strokeDasharray={`${progressStroke} ${circumference - progressStroke}`}
+                  strokeDashoffset={-doneStroke}
+                  strokeLinecap="round"
+                  style={{ transition: "stroke-dasharray 0.5s ease" }}
+                />
+                {/* Failed segment */}
+                <circle
+                  cx={center} cy={center} r={radius} fill="none" stroke="var(--color-error)" strokeWidth="15"
+                  strokeDasharray={`${failedStroke} ${circumference - failedStroke}`}
+                  strokeDashoffset={-(doneStroke + progressStroke)}
+                  strokeLinecap="round"
+                  style={{ transition: "stroke-dasharray 0.5s ease" }}
+                />
+              </svg>
+              <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+                <span style={{ fontSize: 32, fontWeight: 800 }}>{projects.length}</span>
+                <span style={{ fontSize: 11, color: "var(--color-text-muted)", textTransform: "uppercase", fontWeight: 700 }}>Projects</span>
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 24, width: "100%" }}>
+              {[
+                { label: "Done", count: doneCount, color: "var(--color-success)", icon: <CheckCircle2 size={14} /> },
+                { label: "Progress", count: progressCount, color: "var(--color-accent)", icon: <Clock size={14} /> },
+                { label: "Failed", count: failedCount, color: "var(--color-error)", icon: <AlertCircle size={14} /> },
+              ].map((stat) => (
+                <div key={stat.label} style={{ textAlign: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, color: stat.color, marginBottom: 4 }}>
+                    {stat.icon}
+                    <span style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase" }}>{stat.label}</span>
+                  </div>
+                  <div style={{ fontSize: 20, fontWeight: 700 }}>{stat.count}</div>
+                  <div style={{ fontSize: 10, color: "var(--color-text-muted)" }}>{Math.round((stat.count / total) * 100)}%</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* GitHub Card */}
+          <div className="glass" style={{ padding: 32, borderRadius: "var(--radius-xl)", background: "var(--color-surface)", border: "1px solid var(--color-border)", display: "flex", flexDirection: "column", gap: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 40, height: 40, borderRadius: "var(--radius-md)", background: "var(--color-surface2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Github size={20} />
+              </div>
+              <h3 style={{ fontSize: 18, fontWeight: 700 }}>Deployment</h3>
+            </div>
+
+            <div style={{ flex: 1 }}>
+              {repoUrl ? (
+                <div style={{ padding: "16px", borderRadius: 12, background: "rgba(16,185,129,0.05)", border: "1px solid rgba(16,185,129,0.15)" }}>
+                  <div style={{ fontSize: 13, color: "var(--color-success)", fontWeight: 600, marginBottom: 8 }}>✅ Project deployed to GitHub</div>
+                  <a href={repoUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: "var(--color-accent)", textDecoration: "none", wordBreak: "break-all" }}>{repoUrl}</a>
+                </div>
+              ) : githubError ? (
+                <div style={{ color: "var(--color-error)", fontSize: 13 }}>{githubError}</div>
+              ) : user?.githubConnected ? (
+                <div style={{ color: "var(--color-text-muted)", fontSize: 13 }}>Connected as <strong>{user.githubUsername}</strong></div>
+              ) : (
+                <p style={{ color: "var(--color-text-muted)", fontSize: 13, lineHeight: 1.5 }}>Connect GitHub to enable automated repository creation and cloud deployment for your building projects.</p>
+              )}
+            </div>
+
+            <button
+              onClick={handleConnectGithubDeploy}
+              disabled={githubDeploying}
+              className="btn btn-primary"
+              style={{ width: "100%", padding: "12px", gap: 8 }}
             >
+              {githubDeploying ? <Loader2 size={16} className="animate-spin" /> : <Github size={16} />}
+              Connect GitHub
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function renderProfile() {
+    return (
+      <div style={{ maxWidth: 600 }}>
+        <header style={{ marginBottom: 32 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Profile</h1>
+          <p style={{ color: "var(--color-text-muted)", fontSize: 14 }}>Manage your account settings and security.</p>
+        </header>
+
+        <div className="glass" style={{ padding: 32, borderRadius: "var(--radius-xl)", background: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
+            <div style={{ width: 40, height: 40, borderRadius: "var(--radius-md)", background: "var(--color-accent-muted)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <User size={18} color="var(--color-accent)" />
+            </div>
+            <h2 style={{ fontSize: 18, fontWeight: 700 }}>Security</h2>
+          </div>
+
+          <form onSubmit={handleUpdateProfile} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            <div>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)", marginBottom: 8 }}>Email Address</label>
+              <input disabled value={user?.email || ""} className="input-field" style={{ background: "var(--color-surface2)", cursor: "not-allowed", opacity: 0.7 }} />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)", marginBottom: 8 }}>New Password</label>
+              <input required type="password" placeholder="Min 6 characters..." value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="input-field" style={{ background: "var(--color-surface2)" }} />
+            </div>
+            <button type="submit" className="btn btn-primary" style={{ padding: "12px 20px", alignSelf: "flex-start" }}>Update Password</button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  function renderProvider() {
+    return (
+      <div style={{ maxWidth: 800 }}>
+        <header style={{ marginBottom: 32 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Provider</h1>
+          <p style={{ color: "var(--color-text-muted)", fontSize: 14 }}>Configure LLM providers and BYOK (Bring Your Own Keys).</p>
+        </header>
+
+        <div className="glass" style={{ padding: 32, borderRadius: "var(--radius-xl)", background: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
+            <div style={{ width: 40, height: 40, borderRadius: "var(--radius-md)", background: "var(--color-accent-muted)", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Key size={18} color="var(--color-accent)" />
             </div>
-            <h2 style={{ fontSize: 18, fontWeight: 700 }}>API Keys (BYOK)</h2>
+            <h2 style={{ fontSize: 18, fontWeight: 700 }}>API Keys</h2>
           </div>
 
-          <form onSubmit={handleAddKey} style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+          <form onSubmit={handleAddKey} style={{ display: "flex", gap: 12, marginBottom: 24 }}>
             <select
               value={newKeyProvider}
               onChange={(e) => setNewKeyProvider(e.target.value)}
-              style={{
-                padding: "10px 12px",
-                borderRadius: "var(--radius-md)",
-                background: "var(--color-surface2)",
-                border: "1px solid var(--color-border)",
-                color: "var(--color-text)",
-                outline: "none",
-                minWidth: 100,
-              }}
+              style={{ padding: "10px 12px", borderRadius: "8px", background: "var(--color-surface2)", border: "1px solid var(--color-border)", color: "var(--color-text)", outline: "none", minWidth: 120 }}
             >
               {availableProviders.map((provider) => (
-                <option key={provider.id} value={provider.id}>
-                  {provider.name}
-                </option>
+                <option key={provider.id} value={provider.id}>{provider.name}</option>
               ))}
             </select>
             <input
               required
-              type="text"
               placeholder="api_key..."
               value={newKeyValue}
               onChange={(e) => setNewKeyValue(e.target.value)}
-              style={{
-                flex: 1,
-                padding: "10px 12px",
-                borderRadius: "var(--radius-md)",
-                background: "var(--color-surface2)",
-                border: "1px solid var(--color-border)",
-                color: "var(--color-text)",
-                outline: "none",
-              }}
+              style={{ flex: 1, padding: "10px 12px", borderRadius: "8px", background: "var(--color-surface2)", border: "1px solid var(--color-border)", color: "var(--color-text)", outline: "none" }}
             />
-            <button
-              type="submit"
-              style={{
-                padding: "10px 14px",
-                borderRadius: "var(--radius-md)",
-                background: "var(--gradient-accent)",
-                color: "#fff",
-                border: "none",
-                cursor: "pointer",
-              }}
-            >
-              <Plus size={16} />
+            <button type="submit" className="btn btn-primary" style={{ padding: "10px 16px" }}>
+              <Plus size={18} />
             </button>
           </form>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {keys.length === 0 && (
-              <div style={{ fontSize: 13, color: "var(--color-text-muted)" }}>No keys added yet. Add one above.</div>
+              <div style={{ padding: "20px", textAlign: "center", border: "1px dashed var(--color-border)", borderRadius: 12 }}>
+                <span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>No keys added yet. Add one above.</span>
+              </div>
             )}
             {keys.map((k, index) => (
-              <div
-                key={k.id}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "14px 16px",
-                  background: "var(--color-surface2)",
-                  borderRadius: "var(--radius-md)",
-                  border: "1px solid var(--color-border)",
-                }}
-              >
+              <div key={k.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", background: "var(--color-surface2)", borderRadius: "12px", border: "1px solid var(--color-border)" }}>
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: 13, textTransform: "capitalize" }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, textTransform: "capitalize", display: "flex", alignItems: "center", gap: 8 }}>
                     {k.provider}
-                    <span style={{ marginLeft: 8, fontSize: 11, color: "var(--color-text-muted2)" }}>#{index + 1}</span>
+                    <span style={{ fontSize: 10, padding: "2px 6px", background: "var(--color-border)", borderRadius: 4 }}>KEY #{index + 1}</span>
                   </div>
-                  {k.label ? <div style={{ fontSize: 12, color: "var(--color-text)" }}>{k.label}</div> : null}
-                  <div style={{ fontSize: 11, color: "var(--color-text-muted2)" }}>
-                    Added {new Date(k.created_at).toLocaleDateString()}
-                  </div>
+                  <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginTop: 4 }}>Added on {new Date(k.created_at).toLocaleDateString()}</div>
                 </div>
-                <button
-                  onClick={() => handleDeleteKey(k.id)}
-                  style={{ background: "transparent", border: "none", color: "var(--color-error)", cursor: "pointer" }}
-                >
-                  <Trash2 size={16} />
+                <button onClick={() => handleDeleteKey(k.id)} style={{ background: "transparent", border: "none", color: "var(--color-error)", cursor: "pointer", padding: 8 }}>
+                  <Trash2 size={18} />
                 </button>
               </div>
             ))}
           </div>
         </div>
+      </div>
+    );
+  }
 
-        {/* Pipeline Config Card */}
-        <div className="glass" style={{ padding: 24, borderRadius: "var(--radius-xl)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-            <div
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: "var(--radius-md)",
-                background: "var(--color-accent-muted)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
+  function renderPipeline() {
+    return (
+      <div style={{ maxWidth: 800 }}>
+        <header style={{ marginBottom: 32 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Pipeline Configuration</h1>
+          <p style={{ color: "var(--color-text-muted)", fontSize: 14 }}>Fine-tune the AI building engine and self-healing loops.</p>
+        </header>
+
+        <div className="glass" style={{ padding: 32, borderRadius: "var(--radius-xl)", background: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
+            <div style={{ width: 40, height: 40, borderRadius: "var(--radius-md)", background: "var(--color-accent-muted)", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Settings size={18} color="var(--color-accent)" />
             </div>
-            <h2 style={{ fontSize: 18, fontWeight: 700 }}>Pipeline Configuration</h2>
+            <h2 style={{ fontSize: 18, fontWeight: 700 }}>Engine Toggles</h2>
           </div>
+
           {pipeline && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <Toggle label="Clear Sandbox Before Build" checked={pipeline.clearSandboxEnabled} onChange={() => togglePipeline("clearSandboxEnabled")} />
-              <Toggle label="Generate Design System" checked={pipeline.designSystemEnabled} onChange={() => togglePipeline("designSystemEnabled")} />
-              <Toggle label="Write .lovable/spec.md" checked={pipeline.specEnabled} onChange={() => togglePipeline("specEnabled")} />
-              <Toggle label="Build System Prompt" checked={pipeline.systemPromptEnabled} onChange={() => togglePipeline("systemPromptEnabled")} />
-              <div style={{ height: 1, background: "var(--color-border)", margin: "8px 0" }} />
-              <Toggle label="Generate Work Plan (Planner Phase)" checked={pipeline.plannerEnabled} onChange={() => togglePipeline("plannerEnabled")} />
-              <Toggle label="Generate Code (Builder Phase)" checked={pipeline.builderEnabled} onChange={() => togglePipeline("builderEnabled")} />
-              <div style={{ height: 1, background: "var(--color-border)", margin: "8px 0" }} />
-              <Toggle label="Auto Install NPM Dependencies" checked={pipeline.autoInstallEnabled} onChange={() => togglePipeline("autoInstallEnabled")} />
-              <Toggle label="Project Build Check (Vite)" checked={pipeline.projectBuildEnabled} onChange={() => togglePipeline("projectBuildEnabled")} />
-              <Toggle label="Integration Tests (npm test)" checked={pipeline.integrationTestEnabled} onChange={() => togglePipeline("integrationTestEnabled")} />
-              <div style={{ height: 1, background: "var(--color-border)", margin: "8px 0" }} />
-              <Toggle label="Code Linter Validation" checked={pipeline.linterEnabled} onChange={() => togglePipeline("linterEnabled")} />
-              <Toggle label="Backend Runtime Service (Port 3001)" checked={pipeline.runtimeEnabled} onChange={() => togglePipeline("runtimeEnabled")} />
-              <Toggle label="Feature & UI Validator (Playwright)" checked={pipeline.featureValidatorEnabled} onChange={() => togglePipeline("featureValidatorEnabled")} />
-              <div style={{ height: 1, background: "var(--color-border)", margin: "8px 0" }} />
-              <Toggle label="Self-Healing Correction Loop" checked={pipeline.selfHealingEnabled} onChange={() => togglePipeline("selfHealingEnabled")} />
-              <Toggle label="Save Project Summary (.lovable/summary.md)" checked={pipeline.summaryEnabled} onChange={() => togglePipeline("summaryEnabled")} />
-              <Toggle label="Active Memory (Context)" checked={pipeline.activeMemoryEnabled} onChange={() => togglePipeline("activeMemoryEnabled")} />
-              <div style={{ height: 1, background: "var(--color-border)", margin: "8px 0" }} />
-              <Toggle label="Use Same Model Sequence For All Stages" checked={pipeline.useSharedModels} onChange={() => updatePipeline({ useSharedModels: !pipeline.useSharedModels })} />
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <Toggle label="Clear Sandbox" checked={pipeline.clearSandboxEnabled} onChange={() => togglePipeline("clearSandboxEnabled")} />
+                  <Toggle label="Design System" checked={pipeline.designSystemEnabled} onChange={() => togglePipeline("designSystemEnabled")} />
+                  <Toggle label="Generate Spec" checked={pipeline.specEnabled} onChange={() => togglePipeline("specEnabled")} />
+                  <Toggle label="System Prompt" checked={pipeline.systemPromptEnabled} onChange={() => togglePipeline("systemPromptEnabled")} />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <Toggle label="Planner Phase" checked={pipeline.plannerEnabled} onChange={() => togglePipeline("plannerEnabled")} />
+                  <Toggle label="Builder Phase" checked={pipeline.builderEnabled} onChange={() => togglePipeline("builderEnabled")} />
+                  <Toggle label="Auto NPM Install" checked={pipeline.autoInstallEnabled} onChange={() => togglePipeline("autoInstallEnabled")} />
+                  <Toggle label="Build Check" checked={pipeline.projectBuildEnabled} onChange={() => togglePipeline("projectBuildEnabled")} />
+                </div>
+              </div>
+
+              <div style={{ height: 1, background: "var(--color-border)", margin: "10px 0" }} />
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <Toggle label="Linter Validation" checked={pipeline.linterEnabled} onChange={() => togglePipeline("linterEnabled")} />
+                  <Toggle label="Runtime Sync" checked={pipeline.runtimeEnabled} onChange={() => togglePipeline("runtimeEnabled")} />
+                  <Toggle label="Feature Validator" checked={pipeline.featureValidatorEnabled} onChange={() => togglePipeline("featureValidatorEnabled")} />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <Toggle label="Self-Healing" checked={pipeline.selfHealingEnabled} onChange={() => togglePipeline("selfHealingEnabled")} />
+                  <Toggle label="Project Summary" checked={pipeline.summaryEnabled} onChange={() => togglePipeline("summaryEnabled")} />
+                  <Toggle label="Active Memory" checked={pipeline.activeMemoryEnabled} onChange={() => togglePipeline("activeMemoryEnabled")} />
+                </div>
+              </div>
+
+              <div style={{ height: 1, background: "var(--color-border)", margin: "10px 0" }} />
+
+              <Toggle label="Shared Model Sequence" checked={pipeline.useSharedModels} onChange={() => updatePipeline({ useSharedModels: !pipeline.useSharedModels })} />
 
               {pipeline.useSharedModels ? (
                 <MultiModelPicker
                   label="Shared model sequence"
-                  hint="The builder will try these provider/model pairs in order until one succeeds."
+                  hint="The builder will try these in order."
                   value={pipeline.sharedModels || []}
                   options={modelOptions}
                   onChange={(models) => updatePipeline({ sharedModels: models })}
                 />
               ) : (
-                <div style={{ display: "grid", gap: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
                   {STAGE_FIELDS.map((field) => (
                     <MultiModelPicker
                       key={field.key}
@@ -471,101 +605,22 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
-                <span style={{ fontSize: 13, fontWeight: 500 }}>Max AI Iterations</span>
-                <input
-                  type="number"
-                  min="1"
-                  max="150"
-                  value={pipeline.maxIter}
-                  onChange={(e) => updatePipeline({ maxIter: parseInt(e.target.value) || 1 })}
-                  style={{
-                    width: 70,
-                    padding: "6px 10px",
-                    borderRadius: "var(--radius-sm)",
-                    background: "var(--color-surface2)",
-                    border: "1px solid var(--color-border)",
-                    color: "var(--color-text)",
-                    outline: "none",
-                    textAlign: "center",
-                  }}
-                />
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 13, fontWeight: 500 }}>Max Healing Attempts</span>
-                <input
-                  type="number"
-                  min="1"
-                  max="50"
-                  value={pipeline.maxHealingAttempts}
-                  onChange={(e) => updatePipeline({ maxHealingAttempts: parseInt(e.target.value) || 1 })}
-                  style={{
-                    width: 70,
-                    padding: "6px 10px",
-                    borderRadius: "var(--radius-sm)",
-                    background: "var(--color-surface2)",
-                    border: "1px solid var(--color-border)",
-                    color: "var(--color-text)",
-                    outline: "none",
-                    textAlign: "center",
-                  }}
-                />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginTop: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px", borderRadius: 8, background: "var(--color-surface2)" }}>
+                  <span style={{ fontSize: 13, fontWeight: 500 }}>Max Iterations</span>
+                  <input type="number" min="1" max="150" value={pipeline.maxIter} onChange={(e) => updatePipeline({ maxIter: parseInt(e.target.value) || 1 })} style={{ width: 60, padding: "5px", background: "transparent", border: "1px solid var(--color-border)", color: "var(--color-text)", textAlign: "center" }} />
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px", borderRadius: 8, background: "var(--color-surface2)" }}>
+                  <span style={{ fontSize: 13, fontWeight: 500 }}>Max Healing</span>
+                  <input type="number" min="1" max="50" value={pipeline.maxHealingAttempts} onChange={(e) => updatePipeline({ maxHealingAttempts: parseInt(e.target.value) || 1 })} style={{ width: 60, padding: "5px", background: "transparent", border: "1px solid var(--color-border)", color: "var(--color-text)", textAlign: "center" }} />
+                </div>
               </div>
             </div>
           )}
         </div>
-
-        {/* Profile Settings Card */}
-        <div className="glass" style={{ padding: 24, borderRadius: "var(--radius-xl)", gridColumn: "1 / -1" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-            <div
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: "var(--radius-md)",
-                background: "var(--color-accent-muted)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <User size={18} color="var(--color-accent)" />
-            </div>
-            <h2 style={{ fontSize: 18, fontWeight: 700 }}>Profile Settings</h2>
-          </div>
-          <form onSubmit={handleUpdateProfile} style={{ display: "flex", gap: 16, maxWidth: 400 }}>
-            <div style={{ flex: 1 }}>
-              <label
-                style={{
-                  display: "block",
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: "var(--color-text-muted)",
-                  marginBottom: 8,
-                }}
-              >
-                New Password
-              </label>
-              <input
-                required
-                type="password"
-                placeholder="Min 6 characters..."
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                className="input-field"
-                style={{ background: "var(--color-surface2)" }}
-              />
-            </div>
-            <div style={{ display: "flex", alignItems: "flex-end" }}>
-              <button type="submit" className="btn-primary" style={{ padding: "12px 20px" }}>
-                Update
-              </button>
-            </div>
-          </form>
-        </div>
-      </main>
-    </div>
-  );
+      </div>
+    );
+  }
 }
 
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: () => void }) {

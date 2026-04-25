@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import Navbar from "./Navbar";
 import Footer from "./Footer";
+import { useAuth } from "../hooks/useAuth";
 
 interface AnimatedSectionProps {
   children: React.ReactNode;
@@ -136,8 +137,8 @@ const FeatureCard: React.FC<FeatureCardProps> = ({
       >
         {React.isValidElement(icon)
           ? React.cloneElement(icon as React.ReactElement<{ size?: number }>, {
-              size: 28,
-            })
+            size: 28,
+          })
           : icon}
       </div>
       <h3
@@ -474,6 +475,7 @@ const StepCard: React.FC<StepCardProps> = ({
 
 export default function LandingPage() {
   const [heroVisible, setHeroVisible] = useState(false);
+  const { user } = useAuth();
 
   useEffect(() => {
     const timer = setTimeout(() => setHeroVisible(true), 100);
@@ -532,33 +534,6 @@ export default function LandingPage() {
         />
 
         {/* Badge */}
-        <div
-          style={{
-            opacity: heroVisible ? 1 : 0,
-            transform: heroVisible ? "translateY(0)" : "translateY(20px)",
-            transition: "all 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.2s",
-          }}
-        >
-          <div
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "10px",
-              padding: "10px 20px",
-              borderRadius: "50px",
-              background: "rgba(139, 92, 246, 0.1)",
-              fontSize: "13px",
-              fontWeight: 600,
-              color: "var(--color-accent)",
-              marginBottom: "40px",
-              border: "1px solid rgba(139, 92, 246, 0.2)",
-              backdropFilter: "blur(10px)",
-            }}
-          >
-            <Sparkles size={14} />
-            <span>Multi-tenant AI generation pipeline is live</span>
-          </div>
-        </div>
 
         {/* Hero Title */}
         <h1
@@ -626,7 +601,7 @@ export default function LandingPage() {
           }}
         >
           <Link
-            to="/register"
+            to={user ? "/dashboard" : "/register"}
             style={{
               background:
                 "linear-gradient(135deg, var(--color-accent) 0%, #a78bfa 100%)",
@@ -639,11 +614,51 @@ export default function LandingPage() {
               display: "flex",
               alignItems: "center",
               gap: "10px",
-              transition: "all 0.3s ease",
+              transition: "all 0.4s cubic-bezier(0.23, 1, 0.32, 1)",
               boxShadow: "0 8px 32px rgba(139, 92, 246, 0.35)",
+              transform: "translateY(0) scale(1)",
+              filter: "brightness(1)",
+              willChange: "transform, box-shadow, filter",
+            }}
+            onMouseEnter={(e) => {
+              const el = e.currentTarget;
+              el.style.transform = "translateY(-4px) scale(1.03)";
+              el.style.boxShadow = "0 20px 50px rgba(139, 92, 246, 0.5)";
+              el.style.filter = "brightness(1.1)";
+              const text = el.querySelector(".sb-text") as HTMLElement;
+              const icon = el.querySelector(".sb-icon") as HTMLElement;
+              if (text) text.style.transform = "translateX(-3px)";
+              if (icon) icon.style.transform = "translateX(3px)";
+            }}
+            onMouseLeave={(e) => {
+              const el = e.currentTarget;
+              el.style.transform = "translateY(0) scale(1)";
+              el.style.boxShadow = "0 8px 32px rgba(139, 92, 246, 0.35)";
+              el.style.filter = "brightness(1)";
+              const text = el.querySelector(".sb-text") as HTMLElement;
+              const icon = el.querySelector(".sb-icon") as HTMLElement;
+              if (text) text.style.transform = "translateX(0)";
+              if (icon) icon.style.transform = "translateX(0)";
             }}
           >
-            Start building <ArrowRight size={18} />
+            <span
+              className="sb-text"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                transition: "transform 0.4s cubic-bezier(0.23, 1, 0.32, 1)",
+              }}
+            >
+              {user ? "Go to Dashboard" : "Start building"}
+            </span>
+            <ArrowRight
+              className="sb-icon"
+              size={18}
+              style={{
+                transition: "transform 0.4s cubic-bezier(0.23, 1, 0.32, 1)",
+                transform: "translateX(0)",
+              }}
+            />
           </Link>
           <a
             href="https://github.com"
@@ -659,10 +674,52 @@ export default function LandingPage() {
               display: "flex",
               alignItems: "center",
               gap: "10px",
-              transition: "all 0.3s ease",
+              transition: "all 0.4s cubic-bezier(0.23, 1, 0.32, 1)",
+              transform: "translateY(0) scale(1)",
+              filter: "brightness(1)",
+              willChange: "transform, box-shadow, filter, border-color",
+            }}
+            onMouseEnter={(e) => {
+              const el = e.currentTarget;
+              el.style.transform = "translateY(-4px) scale(1.03)";
+              el.style.boxShadow = "0 16px 40px rgba(0,0,0,0.3)";
+              el.style.borderColor = "var(--color-accent)";
+              el.style.filter = "brightness(1.05)";
+              const icon = el.querySelector(".vs-icon") as HTMLElement;
+              const text = el.querySelector(".vs-text") as HTMLElement;
+              if (icon) icon.style.transform = "translateX(3px) rotate(-8deg)";
+              if (text) text.style.transform = "translateX(3px)";
+            }}
+            onMouseLeave={(e) => {
+              const el = e.currentTarget;
+              el.style.transform = "translateY(0) scale(1)";
+              el.style.boxShadow = "none";
+              el.style.borderColor = "var(--color-border)";
+              el.style.filter = "brightness(1)";
+              const icon = el.querySelector(".vs-icon") as HTMLElement;
+              const text = el.querySelector(".vs-text") as HTMLElement;
+              if (icon) icon.style.transform = "translateX(0) rotate(0deg)";
+              if (text) text.style.transform = "translateX(0)";
             }}
           >
-            <Github size={18} /> View Source
+            <Github
+              className="vs-icon"
+              size={18}
+              style={{
+                transition: "all 0.4s cubic-bezier(0.23, 1, 0.32, 1)",
+                transform: "translateX(0) rotate(0deg)",
+              }}
+            />
+            <span
+              className="vs-text"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                transition: "transform 0.4s cubic-bezier(0.23, 1, 0.32, 1)",
+              }}
+            >
+              View Source
+            </span>
           </a>
         </div>
 
@@ -1191,7 +1248,7 @@ export default function LandingPage() {
               Join thousands of developers already building with WAGI.
             </p>
             <Link
-              to="/register"
+              to={user ? "/dashboard" : "/register"}
               style={{
                 background:
                   "linear-gradient(135deg, var(--color-accent) 0%, #a78bfa 100%)",
@@ -1204,11 +1261,51 @@ export default function LandingPage() {
                 display: "inline-flex",
                 alignItems: "center",
                 gap: "10px",
-                transition: "all 0.3s ease",
+                transition: "all 0.4s cubic-bezier(0.23, 1, 0.32, 1)",
                 boxShadow: "0 8px 32px rgba(139, 92, 246, 0.35)",
+                transform: "translateY(0) scale(1)",
+                filter: "brightness(1)",
+                willChange: "transform, box-shadow, filter",
+              }}
+              onMouseEnter={(e) => {
+                const el = e.currentTarget;
+                el.style.transform = "translateY(-4px) scale(1.03)";
+                el.style.boxShadow = "0 20px 50px rgba(139, 92, 246, 0.5)";
+                el.style.filter = "brightness(1.1)";
+                const icon = el.querySelector(".gsf-icon") as HTMLElement;
+                const text = el.querySelector(".gsf-text") as HTMLElement;
+                if (text) text.style.transform = "translateX(-3px)";
+                if (icon) icon.style.transform = "translateX(3px)";
+              }}
+              onMouseLeave={(e) => {
+                const el = e.currentTarget;
+                el.style.transform = "translateY(0) scale(1)";
+                el.style.boxShadow = "0 8px 32px rgba(139, 92, 246, 0.35)";
+                el.style.filter = "brightness(1)";
+                const icon = el.querySelector(".gsf-icon") as HTMLElement;
+                const text = el.querySelector(".gsf-text") as HTMLElement;
+                if (text) text.style.transform = "translateX(0)";
+                if (icon) icon.style.transform = "translateX(0)";
               }}
             >
-              Get Started Free <ArrowRight size={18} />
+              <span
+                className="gsf-text"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  transition: "transform 0.4s cubic-bezier(0.23, 1, 0.32, 1)",
+                }}
+              >
+                {user ? "Go to Dashboard" : "Get Started Free"}
+              </span>
+              <ArrowRight
+                className="gsf-icon"
+                size={18}
+                style={{
+                  transition: "transform 0.4s cubic-bezier(0.23, 1, 0.32, 1)",
+                  transform: "translateX(0)",
+                }}
+              />
             </Link>
           </div>
         </AnimatedSection>

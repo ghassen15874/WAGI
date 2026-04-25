@@ -21,6 +21,11 @@ class RenameProjectRequest(BaseModel):
     name: str
 
 
+class UpdateProjectFileRequest(BaseModel):
+    path: str
+    content: str
+
+
 def _remove_file(path: str) -> None:
     try:
         if path and os.path.exists(path):
@@ -35,6 +40,23 @@ def _should_skip_dir(dirname: str) -> bool:
 
 def _should_skip_file(filename: str) -> bool:
     return filename.endswith((".pyc", ".pyo")) or filename in {".DS_Store"}
+
+
+def _normalize_project_file_path(path: str) -> str:
+    normalized = str(path or "").strip().replace("\\", "/")
+    if not normalized:
+        return ""
+    if normalized.startswith("/"):
+        return ""
+    parts = [part for part in normalized.split("/") if part]
+    if not parts:
+        return ""
+    if any(part in {".", ".."} for part in parts):
+        return ""
+    clean = "/".join(parts)
+    if clean.startswith((".git/", "node_modules/", ".lovable/")):
+        return ""
+    return clean
 
 @router.get("")
 async def list_projects(user: dict = Depends(get_current_user)):
@@ -105,6 +127,54 @@ async def get_project_files(project_id: str, user: dict = Depends(get_current_us
                 pass
                 
     return {"files": files}
+
+
+@router.patch("/{project_id}/files")
+async def update_project_file(
+    project_id: str,
+    req: UpdateProjectFileRequest,
+    user: dict = Depends(get_current_user),
+):
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM projects WHERE id = %s AND user_id = %s",
+            (project_id, user["sub"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Project not found")
+
+    safe_rel_path = _normalize_project_file_path(req.path)
+    if not safe_rel_path:
+        raise HTTPException(400, "Invalid file path")
+
+    content = str(req.content or "")
+    if len(content.encode("utf-8")) > 2_000_000:
+        raise HTTPException(400, "File content is too large (max 2 MB)")
+
+    sandbox = os.path.join(settings.SANDBOX_BASE_DIR, project_id)
+    if not os.path.isdir(sandbox):
+        raise HTTPException(404, "Project files not found")
+
+    sandbox_abs = os.path.abspath(sandbox)
+    target_abs = os.path.abspath(os.path.join(sandbox_abs, safe_rel_path))
+    if not (target_abs == sandbox_abs or target_abs.startswith(sandbox_abs + os.sep)):
+        raise HTTPException(400, "Invalid file path")
+
+    os.makedirs(os.path.dirname(target_abs), exist_ok=True)
+    try:
+        with open(target_abs, "w", encoding="utf-8") as handle:
+            handle.write(content)
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to write file: {exc}") from exc
+
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE projects SET updated_at = NOW() WHERE id = %s",
+            (project_id,),
+        )
+        conn.commit()
+
+    return {"success": True, "path": safe_rel_path}
 
 
 @router.get("/{project_id}/log-tail")

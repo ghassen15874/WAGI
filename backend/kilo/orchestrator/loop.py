@@ -3651,6 +3651,9 @@ NODE"""
             calls = []
             missing_paths: list[str] = []
             single_batch_guard_note = ""
+            batch_progress_emitted = False
+            pending_paths_snapshot = self._pending_batch_paths()
+            pending_paths_set = set(pending_paths_snapshot)
             # Get the next batch of files.
             if single_batch_mode:
                 retry_override = [
@@ -3658,6 +3661,13 @@ NODE"""
                     for path in list(self.retry_batch_override or [])
                     if str(path or "").strip()
                 ]
+                if pending_paths_set:
+                    retry_override = [
+                        path for path in retry_override
+                        if path in pending_paths_set
+                    ]
+                else:
+                    retry_override = []
                 if retry_override:
                     # Respect narrowed retry scope after validation/write rejection.
                     current_batch, single_batch_guard_note = self._guard_single_batch_paths(
@@ -3666,11 +3676,23 @@ NODE"""
                     )
                 else:
                     current_batch, single_batch_guard_note = self._guard_single_batch_paths(
-                        self._pending_batch_paths(),
+                        pending_paths_snapshot,
                         fallback_cap=int(self.pipeline_config.get("builder_batch_cap", 0) or 0),
                     )
             else:
-                current_batch = list(self.retry_batch_override or self.planner.get_smart_batch(batch_cap=batch_cap))
+                retry_override = [
+                    str(path or "").strip().replace("\\", "/")
+                    for path in list(self.retry_batch_override or [])
+                    if str(path or "").strip()
+                ]
+                if pending_paths_set:
+                    retry_override = [
+                        path for path in retry_override
+                        if path in pending_paths_set
+                    ]
+                else:
+                    retry_override = []
+                current_batch = list(retry_override or self.planner.get_smart_batch(batch_cap=batch_cap))
             current_batch = self._augment_batch_with_runtime_scaffold(
                 current_batch,
                 batch_cap=None if single_batch_mode else batch_cap,
@@ -3957,6 +3979,12 @@ NODE"""
                             for line in str(batch_result or "").splitlines():
                                 if line.strip():
                                     async for t in self._type(f"  - {line}\n"): yield t
+                            current_completed = self.planner.done_count
+                            current_total = self.planner.total_count
+                            if current_total > 0:
+                                async for t in self._type(
+                                    f"ℹ️  Current progress: {current_completed}/{current_total} files\n"
+                                ): yield t
                             if retry_batch and retry_batch != current_batch:
                                 async for t in self._type(
                                     f"ℹ️  Next retry narrowed to {len(retry_batch)} file(s): {', '.join(retry_batch[:8])}\n"
@@ -4050,6 +4078,11 @@ NODE"""
 
                     # Update planner status
                     self._apply_written_paths(list(written_paths))
+                    completed = self.planner.done_count
+                    total = self.planner.total_count
+                    if total > 0:
+                        async for t in self._type(f"✅ Progress: {completed}/{total} files\n"): yield t
+                        batch_progress_emitted = True
                     self.retry_batch_override = []
                     self._clear_generation_failure_state()
 
@@ -4138,7 +4171,7 @@ NODE"""
 
                     completed = self.planner.done_count
                     total = self.planner.total_count
-                    if completed > 0:
+                    if completed > 0 and not batch_progress_emitted:
                         async for t in self._type(f"\n✅ Progress: {completed}/{total} files\n"): yield t
                     self._save_resume_state(original_prompt=original_prompt, iteration=iteration, design=design)
                     

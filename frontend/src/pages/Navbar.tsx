@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { Zap, Menu, X, Sun, Moon } from "lucide-react";
+import { Zap, Menu, X, Sun, Moon, LogOut } from "lucide-react";
 import { useTheme } from "../hooks/useTheme";
+import { useAuth } from "../hooks/useAuth";
 
 const navItems = [
   { label: "Home", section: "home" },
   { label: "Features", section: "features" },
-  { label: "Pricing", section: "pricing" },
   { label: "How it works", section: "how-it-works" },
+  { label: "Pricing", section: "pricing" },
 ];
 
 const NAVBAR_HEIGHT = 72;
@@ -16,6 +17,7 @@ const Navbar: React.FC = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [activeSection, setActiveSection] = useState("home");
   const { theme, toggleTheme } = useTheme();
+  const { user, logout } = useAuth();
 
   useEffect(() => {
     const handleScroll = () => {
@@ -88,11 +90,27 @@ const Navbar: React.FC = () => {
             justifyContent: "center",
             color: "#fff",
             boxShadow: "var(--shadow-accent)",
+            fontWeight: 800,
+            fontSize: 20,
+            lineHeight: 1,
+            letterSpacing: "-0.03em",
+            transition:
+              "transform 0.25s ease, box-shadow 0.25s ease, filter 0.25s ease",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = "translateY(-4px) scale(1.05)";
+            e.currentTarget.style.boxShadow = "0 10px 20px rgba(0,0,0,0.2)";
+            e.currentTarget.style.filter = "brightness(1.05)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = "translateY(0) scale(1)";
+            e.currentTarget.style.boxShadow = "var(--shadow-accent)";
+            e.currentTarget.style.filter = "brightness(1)";
           }}
         >
-          <Zap size={18} />
+          W
         </div>
-        WAGI<span style={{ opacity: 0.5 }}>.</span>
+        WAGI<span style={{ opacity: 0.5 }}></span>
       </div>
 
       <div
@@ -156,27 +174,72 @@ const Navbar: React.FC = () => {
           {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
         </button>
 
-        <Link
-          to="/login"
-          style={{
-            color: "var(--color-text-muted)",
-            textDecoration: "none",
-            fontWeight: 500,
-            fontSize: 14,
-            padding: "8px 16px",
-            borderRadius: "var(--radius-full)",
-            transition: "all var(--transition)",
-          }}
-        >
-          Log in
-        </Link>
-        <Link
-          to="/register"
-          className="btn btn-primary"
-          style={{ padding: "10px 24px", fontSize: 14, textDecoration: "none" }}
-        >
-          Sign up
-        </Link>
+        {!user ? (
+          <>
+            <Link
+              to="/login"
+              style={{
+                color: "var(--color-text-muted)",
+                textDecoration: "none",
+                fontWeight: 500,
+                fontSize: 14,
+                padding: "8px 16px",
+                borderRadius: "var(--radius-full)",
+                transition: "all var(--transition)",
+                border: "1px solid transparent",
+                cursor: "pointer",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = "var(--color-text)";
+                e.currentTarget.style.borderColor = "var(--color-border)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = "var(--color-text-muted)";
+                e.currentTarget.style.borderColor = "transparent";
+              }}
+            >
+              Log in
+            </Link>
+            <Link
+              to="/register"
+              className="btn btn-primary"
+              style={{
+                padding: "10px 24px",
+                fontSize: 14,
+                textDecoration: "none",
+              }}
+            >
+              Sign up
+            </Link>
+          </>
+        ) : (
+          <>
+            <Link
+              to="/dashboard"
+              className="btn"
+              style={{
+                color: "var(--color-text)",
+                textDecoration: "none",
+                fontWeight: 500,
+                fontSize: 14,
+                padding: "8px 16px",
+                borderRadius: "var(--radius-full)",
+                border: "1px solid var(--color-border)",
+                background: "var(--color-surface2)",
+              }}
+            >
+              Dashboard
+            </Link>
+            <button
+              onClick={logout}
+              className="btn btn-icon"
+              title="Log out"
+              style={{ color: "var(--color-text-muted)" }}
+            >
+              <LogOut size={18} />
+            </button>
+          </>
+        )}
       </div>
 
       <button
@@ -263,32 +326,84 @@ const Navbar: React.FC = () => {
               gap: 8,
             }}
           >
-            <Link
-              to="/login"
-              onClick={() => setMobileMenuOpen(false)}
-              style={{
-                color: "var(--color-text-muted)",
-                textDecoration: "none",
-                fontWeight: 500,
-                fontSize: 15,
-                padding: "12px 16px",
-                borderRadius: "var(--radius-md)",
-              }}
-            >
-              Log in
-            </Link>
-            <Link
-              to="/register"
-              onClick={() => setMobileMenuOpen(false)}
-              className="btn btn-primary"
-              style={{
-                fontSize: 15,
-                textAlign: "center",
-                textDecoration: "none",
-              }}
-            >
-              Sign up
-            </Link>
+            {!user ? (
+              <>
+                <Link
+                  to="/login"
+                  onClick={() => setMobileMenuOpen(false)}
+                  style={{
+                    color: "var(--color-text-muted)",
+                    textDecoration: "none",
+                    fontWeight: 500,
+                    fontSize: 15,
+                    padding: "12px 16px",
+                    borderRadius: "var(--radius-md)",
+                    border: "1px solid transparent",
+                    transition: "all var(--transition)",
+                    cursor: "pointer",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = "var(--color-text)";
+                    e.currentTarget.style.borderColor = "var(--color-border)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = "var(--color-text-muted)";
+                    e.currentTarget.style.borderColor = "transparent";
+                  }}
+                >
+                  Log in
+                </Link>
+                <Link
+                  to="/register"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="btn btn-primary"
+                  style={{
+                    fontSize: 15,
+                    textAlign: "center",
+                    textDecoration: "none",
+                  }}
+                >
+                  Sign up
+                </Link>
+              </>
+            ) : (
+              <>
+                <Link
+                  to="/dashboard"
+                  onClick={() => setMobileMenuOpen(false)}
+                  style={{
+                    color: "var(--color-text)",
+                    textDecoration: "none",
+                    fontWeight: 500,
+                    fontSize: 15,
+                    padding: "12px 16px",
+                    borderRadius: "var(--radius-md)",
+                    background: "var(--color-surface2)",
+                    textAlign: "center",
+                  }}
+                >
+                  Go to Dashboard
+                </Link>
+                <button
+                  onClick={() => {
+                    logout();
+                    setMobileMenuOpen(false);
+                  }}
+                  className="btn"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "12px 16px",
+                    color: "var(--color-text-muted)",
+                    justifyContent: "center",
+                  }}
+                >
+                  <LogOut size={18} />
+                  <span>Log out</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

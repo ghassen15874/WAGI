@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect, KeyboardEvent } from 'react'
-import { Send, Square, RotateCcw, Zap, Play } from 'lucide-react'
+import { Send, Square, RotateCcw, Zap, Play, Sun, Moon } from 'lucide-react'
+import { useTheme } from '../hooks/useTheme'
 
 interface ChatPanelProps {
     output: string
     status: 'idle' | 'generating' | 'done' | 'error'
+    compactLogs?: boolean
     onGenerate: (prompt: string) => void
     onResume: () => void
     onStop: () => void
@@ -59,6 +61,24 @@ type OutputBlock =
     | { type: 'text'; text: string }
 
 type OutputTone = 'progress' | 'success' | 'error' | 'agent' | 'warning'
+
+interface PlanningUnit {
+    status: string
+    name: string
+    stage: string
+    files: string
+}
+
+interface ExecutionPlanSummary {
+    status?: string
+    productType?: string
+    appKind?: string
+    summary?: string
+    features?: string
+    pages?: string
+    apiResources?: string
+    units: PlanningUnit[]
+}
 
 const STATUS_PREFIXES = [
     '📦', '🔨', '🛠️', '🧹', '🎨', '📋', '📝', '🔍', '⚙️', '🚀', '🔄', '📁',
@@ -122,6 +142,177 @@ function inferLooseCodeLang(lines: string[]) {
     if (/\b(interface|type|import|export)\b/.test(sample)) return 'ts'
     if (/\b(const|let|var|function)\b/.test(sample)) return 'js'
     return 'text'
+}
+
+function extractAfterColon(line: string) {
+    const idx = line.indexOf(':')
+    return idx >= 0 ? line.slice(idx + 1).trim() : ''
+}
+
+function parseExecutionPlanSummary(output: string): ExecutionPlanSummary | null {
+    const lines = normalizeOutput(output)
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+
+    const startIdx = lines.findIndex(line => line === 'EXECUTION PLAN' || line.startsWith('EXECUTION PLAN STATUS'))
+    if (startIdx === -1) {
+        return null
+    }
+
+    const summary: ExecutionPlanSummary = { units: [] }
+    let inUnits = false
+
+    for (let i = startIdx; i < lines.length; i += 1) {
+        const line = lines[i]
+
+        if (line === 'EXECUTION PLAN') continue
+        if (/^EXECUTION PLAN STATUS/i.test(line)) {
+            summary.status = line.replace(/^EXECUTION PLAN STATUS/i, '').trim()
+            continue
+        }
+        if (/^Product Type:/i.test(line)) {
+            summary.productType = extractAfterColon(line)
+            continue
+        }
+        if (/^App Kind:/i.test(line)) {
+            summary.appKind = extractAfterColon(line)
+            continue
+        }
+        if (/^Summary:/i.test(line)) {
+            summary.summary = extractAfterColon(line)
+            continue
+        }
+        if (/^Features:/i.test(line)) {
+            summary.features = extractAfterColon(line)
+            continue
+        }
+        if (/^Pages:/i.test(line)) {
+            summary.pages = extractAfterColon(line)
+            continue
+        }
+        if (/^API Resources:/i.test(line)) {
+            summary.apiResources = extractAfterColon(line)
+            continue
+        }
+        if (line === 'UNITS') {
+            inUnits = true
+            continue
+        }
+
+        if (inUnits) {
+            const unitMatch = line.match(/^(PENDING|DONE|IN_PROGRESS)\s+([^\[]+)\s+\[([^\]]+)\]\s*::\s*(.+)$/i)
+            if (unitMatch) {
+                summary.units.push({
+                    status: unitMatch[1].toUpperCase(),
+                    name: unitMatch[2].trim(),
+                    stage: unitMatch[3].trim(),
+                    files: unitMatch[4].trim(),
+                })
+                continue
+            }
+            if (line.startsWith('depends_on:')) {
+                continue
+            }
+            if (/^(🤖|⚙️|🔍|🛠️|⏳|✅|❌|📁)/.test(line)) {
+                break
+            }
+        }
+    }
+
+    const hasData =
+        Boolean(summary.status)
+        || Boolean(summary.productType)
+        || Boolean(summary.summary)
+        || summary.units.length > 0
+
+    return hasData ? summary : null
+}
+
+function shouldKeepCompactStatus(text: string) {
+    const keepPatterns = [
+        'Starting build',
+        'plan prepared',
+        'Loaded prepared execution plan',
+        'Resume state restored',
+        'Style:',
+        'Fonts:',
+        'UUPM',
+        'workflow context built',
+        'Key resolution',
+        'Restoring prepared design system',
+        'Using execution plan',
+        'Planned',
+        'Preparing with',
+        'Building scoped architectural context',
+        'Scoping complete',
+        'Stage-aware',
+        'System prompt built',
+        'Calling provider',
+        'Executing write_batch',
+        'Batch write rejected',
+        'BATCH WRITE ERROR',
+        'Phase gate blocked progress',
+        'Partial batch',
+        'Partial write after contract filtering',
+        'Filtered files queued for retry',
+        'Missing files this turn',
+        'Retrying',
+        'This same batch-write rejection',
+        'kept repeating',
+        'fallback',
+        'Self-Heal',
+        'Executing write_batch',
+        'File written:',
+        'Executing execute_command',
+        'Progress:',
+        'Iteration',
+        'Running',
+        'Linter',
+        'Validator',
+        'FATAL',
+        'ERROR',
+        'cancelled',
+    ]
+
+    return keepPatterns.some(pattern => text.toLowerCase().includes(pattern.toLowerCase()))
+}
+
+function shouldKeepCompactText(text: string) {
+    const lines = String(text || '')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+
+    if (!lines.length) return false
+
+    const errorMarkers = [
+        'BLUEPRINT_NOT_ENFORCED',
+        'BLUEPRINT_SCOPE_FAILURE',
+        'IMPORT_SITE_ERROR',
+        'BLUEPRINT_EXPORT_MISMATCH',
+        'SCHEMA_SYNC_ERROR',
+        'API_RESPONSE_ENVELOPE_MISMATCH',
+        'THEME_CONTRACT_ERROR',
+        'TAILWIND_RUNTIME_MISSING',
+        'styling contract validation failed',
+        'pre-write syntax validation failed',
+        'blueprint execution validation failed',
+        'write_batch validation failed',
+    ]
+
+    return lines.some((line) => {
+        const lower = line.toLowerCase()
+        if (line.startsWith('- ')) {
+            return errorMarkers.some((marker) => lower.includes(marker.toLowerCase()))
+        }
+        return errorMarkers.some((marker) => lower.includes(marker.toLowerCase()))
+    })
+}
+
+function isPlanningMetaLine(line: string) {
+    const trimmed = line.trim()
+    return /^Style:/i.test(trimmed) || /^Fonts:/i.test(trimmed)
 }
 
 function parseOutputBlocks(output: string): OutputBlock[] {
@@ -280,11 +471,21 @@ function parseOutputBlocks(output: string): OutputBlock[] {
             continue
         }
 
-        if (isStatusLine(trimmed) || trimmed.startsWith('✓ ')) {
+        if (isStatusLine(trimmed) || trimmed.startsWith('✓ ') || shouldKeepCompactStatus(trimmed)) {
             blocks.push({
                 type: 'status',
                 text: trimmed,
                 tone: getStatusTone(trimmed),
+            })
+            i += 1
+            continue
+        }
+
+        if (isPlanningMetaLine(trimmed)) {
+            blocks.push({
+                type: 'status',
+                text: trimmed,
+                tone: 'progress',
             })
             i += 1
             continue
@@ -314,11 +515,12 @@ function parseOutputBlocks(output: string): OutputBlock[] {
 }
 
 export default function ChatPanel({
-    output, status, onGenerate, onResume, onStop, onReset,
+    output, status, compactLogs = false, onGenerate, onResume, onStop, onReset,
     provider, model, apiKey, onProviderChange,
     availableProviders,
     showPreview, setShowPreview, showLogs, setShowLogs
 }: ChatPanelProps) {
+    const { theme, toggleTheme } = useTheme()
     const [prompt, setPrompt] = useState('')
     const [isInputFocused, setIsInputFocused] = useState(false)
     const outputRef = useRef<HTMLDivElement>(null)
@@ -330,6 +532,15 @@ export default function ChatPanel({
     const providerOptions = availableProviders.length ? availableProviders : FALLBACK_PROVIDERS
     const currentProvider = providerOptions.find(p => p.id === provider) || providerOptions[0]
     const outputBlocks = hasVisibleOutput ? parseOutputBlocks(output) : []
+    const executionPlan = hasVisibleOutput ? parseExecutionPlanSummary(output) : null
+    const compactBlocks = compactLogs
+        ? outputBlocks.filter((block) => {
+            if (block.type === 'status') return shouldKeepCompactStatus(block.text)
+            if (block.type === 'plan') return true
+            if (block.type === 'text') return shouldKeepCompactText(block.text)
+            return false
+        })
+        : outputBlocks
 
     useEffect(() => {
         if (outputRef.current) {
@@ -380,6 +591,13 @@ export default function ChatPanel({
                         title="Toggle Preview"
                     >
                         Preview
+                    </button>
+                    <button
+                        onClick={toggleTheme}
+                        style={{ ...toggleButtonStyle, color: 'var(--color-text-muted)' }}
+                        title="Toggle Theme"
+                    >
+                        {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
                     </button>
                     <button
                         onClick={() => setShowLogs(!showLogs)}
@@ -447,187 +665,325 @@ export default function ChatPanel({
                 }}>
                     {(hasVisibleOutput || status === 'generating') ? (
                         <span className={status === 'generating' ? '' : 'animate-fadeIn'}>
-                            {hasVisibleOutput ? outputBlocks.map((block, i) => {
-                                if (block.type === 'status') {
-                                    const toneStyles: Record<OutputTone, React.CSSProperties> = {
-                                        progress: {
-                                            background: 'var(--color-surface2)',
-                                            color: 'var(--color-text)',
-                                            border: '1px solid var(--color-border)',
-                                        },
-                                        success: {
-                                            background: 'rgba(16,185,129,0.1)',
-                                            color: 'var(--color-success)',
-                                            border: '1px solid rgba(16,185,129,0.2)',
-                                        },
-                                        error: {
-                                            background: 'rgba(239,68,68,0.1)',
-                                            color: 'var(--color-error)',
-                                            border: '1px solid rgba(239,68,68,0.2)',
-                                        },
-                                        warning: {
-                                            background: 'rgba(245,158,11,0.12)',
-                                            color: '#d97706',
-                                            border: '1px solid rgba(245,158,11,0.2)',
-                                        },
-                                        agent: {
-                                            background: 'var(--color-surface2)',
-                                            color: 'var(--color-text-muted)',
-                                            border: '1px solid var(--color-border)',
-                                            fontStyle: 'italic',
-                                        },
-                                    }
-
-                                    return (
-                                        <div key={i} style={{
-                                            ...toneStyles[block.tone],
-                                            padding: '6px 12px',
-                                            borderRadius: 8,
-                                            fontSize: 12,
-                                            margin: '4px 0',
-                                            fontFamily: 'var(--font-mono)',
-                                        }}>
-                                            {block.text}
-                                        </div>
-                                    )
-                                }
-
-                                if (block.type === 'heading') {
-                                    const fontSize = block.level === 1 ? 20 : block.level === 2 ? 16 : 14
-                                    return (
-                                        <div key={i} style={{
-                                            marginTop: i === 0 ? 0 : 18,
-                                            marginBottom: 8,
-                                            fontWeight: 700,
-                                            fontSize,
-                                            color: 'var(--color-text)',
-                                            letterSpacing: block.level === 3 ? '0.02em' : undefined,
-                                            textTransform: block.level === 3 ? 'uppercase' : undefined,
-                                        }}>
-                                            {block.text}
-                                        </div>
-                                    )
-                                }
-
-                                if (block.type === 'plan') {
-                                    return (
-                                        <div key={i} style={{
-                                            background: 'var(--color-surface2)',
-                                            border: '1px solid var(--color-border)',
+                            {hasVisibleOutput ? (
+                                <>
+                                    {compactLogs && executionPlan && (
+                                        <div style={{
+                                            background: 'linear-gradient(180deg, rgba(99,102,241,0.10), rgba(99,102,241,0.04))',
+                                            border: '1px solid rgba(99,102,241,0.25)',
                                             borderRadius: 14,
                                             padding: 14,
-                                            margin: '10px 0',
+                                            margin: '6px 0 12px 0',
                                         }}>
                                             <div style={{
-                                                fontWeight: 700,
-                                                fontSize: 13,
-                                                marginBottom: 10,
-                                                color: 'var(--color-text)',
+                                                fontSize: 12,
+                                                fontWeight: 800,
+                                                letterSpacing: '0.05em',
                                                 textTransform: 'uppercase',
-                                                letterSpacing: '0.04em',
+                                                color: 'var(--color-primary)',
+                                                marginBottom: 10,
                                             }}>
-                                                {block.title}
+                                                Planning Mode
                                             </div>
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                                {block.items.map((item, itemIndex) => (
-                                                    <div key={itemIndex} style={{
+                                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                                                {executionPlan.status && (
+                                                    <span style={{
+                                                        fontSize: 11,
+                                                        padding: '4px 8px',
+                                                        borderRadius: 999,
+                                                        background: 'var(--color-surface2)',
+                                                        border: '1px solid var(--color-border)',
+                                                    }}>
+                                                        {executionPlan.status}
+                                                    </span>
+                                                )}
+                                                {executionPlan.productType && (
+                                                    <span style={{
+                                                        fontSize: 11,
+                                                        padding: '4px 8px',
+                                                        borderRadius: 999,
+                                                        background: 'var(--color-surface2)',
+                                                        border: '1px solid var(--color-border)',
+                                                    }}>
+                                                        Product: {executionPlan.productType}
+                                                    </span>
+                                                )}
+                                                {executionPlan.appKind && (
+                                                    <span style={{
+                                                        fontSize: 11,
+                                                        padding: '4px 8px',
+                                                        borderRadius: 999,
+                                                        background: 'var(--color-surface2)',
+                                                        border: '1px solid var(--color-border)',
+                                                    }}>
+                                                        App: {executionPlan.appKind}
+                                                    </span>
+                                                )}
+                                                {executionPlan.units.length > 0 && (
+                                                    <span style={{
+                                                        fontSize: 11,
+                                                        padding: '4px 8px',
+                                                        borderRadius: 999,
+                                                        background: 'rgba(16,185,129,0.1)',
+                                                        border: '1px solid rgba(16,185,129,0.25)',
+                                                        color: 'var(--color-success)',
+                                                    }}>
+                                                        Units: {executionPlan.units.length}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {executionPlan.summary && (
+                                                <div style={{
+                                                    fontSize: 12,
+                                                    color: 'var(--color-text-muted)',
+                                                    lineHeight: 1.6,
+                                                    marginBottom: 10,
+                                                }}>
+                                                    {executionPlan.summary}
+                                                </div>
+                                            )}
+                                            {executionPlan.units.length > 0 && (
+                                                <div style={{
+                                                    display: 'grid',
+                                                    gap: 6,
+                                                    maxHeight: 160,
+                                                    overflowY: 'auto',
+                                                    paddingRight: 2,
+                                                }}>
+                                                    {executionPlan.units.slice(0, 12).map((unit, idx) => (
+                                                        <div key={`${unit.name}-${idx}`} style={{
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: 8,
+                                                            background: 'var(--color-surface2)',
+                                                            border: '1px solid var(--color-border)',
+                                                            borderRadius: 8,
+                                                            padding: '6px 8px',
+                                                            fontSize: 11,
+                                                        }}>
+                                                            <span style={{
+                                                                minWidth: 64,
+                                                                textAlign: 'center',
+                                                                borderRadius: 999,
+                                                                padding: '2px 8px',
+                                                                background: unit.status === 'DONE'
+                                                                    ? 'rgba(16,185,129,0.12)'
+                                                                    : 'rgba(245,158,11,0.12)',
+                                                                color: unit.status === 'DONE' ? 'var(--color-success)' : '#d97706',
+                                                                fontWeight: 700,
+                                                            }}>
+                                                                {unit.status}
+                                                            </span>
+                                                            <span style={{ fontWeight: 600, color: 'var(--color-text)' }}>{unit.name}</span>
+                                                            <span style={{ color: 'var(--color-text-muted)' }}>[{unit.stage}]</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {compactLogs && (
+                                        <div style={{
+                                            fontSize: 11,
+                                            color: 'var(--color-text-muted)',
+                                            marginBottom: 10,
+                                            padding: '6px 10px',
+                                            borderRadius: 8,
+                                            background: 'var(--color-surface2)',
+                                            border: '1px solid var(--color-border)',
+                                        }}>
+                                            Streaming code is shown in Monaco editor. Chat shows progress only.
+                                        </div>
+                                    )}
+
+                                    {compactBlocks.map((block, i) => {
+                                        if (block.type === 'status') {
+                                            const toneStyles: Record<OutputTone, React.CSSProperties> = {
+                                                progress: {
+                                                    background: 'var(--color-surface2)',
+                                                    color: 'var(--color-text)',
+                                                    border: '1px solid var(--color-border)',
+                                                },
+                                                success: {
+                                                    background: 'rgba(16,185,129,0.1)',
+                                                    color: 'var(--color-success)',
+                                                    border: '1px solid rgba(16,185,129,0.2)',
+                                                },
+                                                error: {
+                                                    background: 'rgba(239,68,68,0.1)',
+                                                    color: 'var(--color-error)',
+                                                    border: '1px solid rgba(239,68,68,0.2)',
+                                                },
+                                                warning: {
+                                                    background: 'rgba(245,158,11,0.12)',
+                                                    color: '#d97706',
+                                                    border: '1px solid rgba(245,158,11,0.2)',
+                                                },
+                                                agent: {
+                                                    background: 'var(--color-surface2)',
+                                                    color: 'var(--color-text-muted)',
+                                                    border: '1px solid var(--color-border)',
+                                                    fontStyle: 'italic',
+                                                },
+                                            }
+
+                                            return (
+                                                <div key={i} style={{
+                                                    ...toneStyles[block.tone],
+                                                    padding: '6px 12px',
+                                                    borderRadius: 8,
+                                                    fontSize: 12,
+                                                    margin: '4px 0',
+                                                    fontFamily: 'var(--font-mono)',
+                                                }}>
+                                                    {block.text}
+                                                </div>
+                                            )
+                                        }
+
+                                        if (block.type === 'heading') {
+                                            const fontSize = block.level === 1 ? 20 : block.level === 2 ? 16 : 14
+                                            return (
+                                                <div key={i} style={{
+                                                    marginTop: i === 0 ? 0 : 18,
+                                                    marginBottom: 8,
+                                                    fontWeight: 700,
+                                                    fontSize,
+                                                    color: 'var(--color-text)',
+                                                    letterSpacing: block.level === 3 ? '0.02em' : undefined,
+                                                    textTransform: block.level === 3 ? 'uppercase' : undefined,
+                                                }}>
+                                                    {block.text}
+                                                </div>
+                                            )
+                                        }
+
+                                        if (block.type === 'plan') {
+                                            return (
+                                                <div key={i} style={{
+                                                    background: 'var(--color-surface2)',
+                                                    border: '1px solid var(--color-border)',
+                                                    borderRadius: 14,
+                                                    padding: 14,
+                                                    margin: '10px 0',
+                                                }}>
+                                                    <div style={{
+                                                        fontWeight: 700,
+                                                        fontSize: 13,
+                                                        marginBottom: 10,
+                                                        color: 'var(--color-text)',
+                                                        textTransform: 'uppercase',
+                                                        letterSpacing: '0.04em',
+                                                    }}>
+                                                        {block.title}
+                                                    </div>
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                                        {block.items.map((item, itemIndex) => (
+                                                            <div key={itemIndex} style={{
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                gap: 10,
+                                                                padding: '6px 8px',
+                                                                background: 'rgba(255,255,255,0.02)',
+                                                                borderRadius: 8,
+                                                            }}>
+                                                                <span style={{
+                                                                    minWidth: 44,
+                                                                    textAlign: 'center',
+                                                                    borderRadius: 999,
+                                                                    padding: '2px 8px',
+                                                                    fontSize: 10,
+                                                                    fontWeight: 700,
+                                                                    letterSpacing: '0.05em',
+                                                                    color: item.status === 'done' ? 'var(--color-success)' : '#d97706',
+                                                                    background: item.status === 'done'
+                                                                        ? 'rgba(16,185,129,0.12)'
+                                                                        : 'rgba(245,158,11,0.12)',
+                                                                }}>
+                                                                    {item.status === 'done' ? 'DONE' : 'TODO'}
+                                                                </span>
+                                                                <code style={{
+                                                                    fontFamily: 'var(--font-mono)',
+                                                                    color: 'var(--color-text)',
+                                                                    fontSize: 12,
+                                                                }}>
+                                                                    {item.text}
+                                                                </code>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )
+                                        }
+
+                                        if (block.type === 'code') {
+                                            if (compactLogs) {
+                                                return null
+                                            }
+
+                                            return (
+                                                <div key={i} style={{
+                                                    background: '#0f1117',
+                                                    border: '1px solid rgba(148,163,184,0.18)',
+                                                    borderRadius: 14,
+                                                    overflow: 'hidden',
+                                                    margin: '10px 0',
+                                                }}>
+                                                    <div style={{
                                                         display: 'flex',
+                                                        justifyContent: 'space-between',
                                                         alignItems: 'center',
-                                                        gap: 10,
-                                                        padding: '6px 8px',
-                                                        background: 'rgba(255,255,255,0.02)',
-                                                        borderRadius: 8,
+                                                        gap: 12,
+                                                        padding: '10px 12px',
+                                                        borderBottom: '1px solid rgba(148,163,184,0.12)',
+                                                        background: 'rgba(255,255,255,0.03)',
                                                     }}>
                                                         <span style={{
-                                                            minWidth: 44,
-                                                            textAlign: 'center',
-                                                            borderRadius: 999,
-                                                            padding: '2px 8px',
-                                                            fontSize: 10,
-                                                            fontWeight: 700,
-                                                            letterSpacing: '0.05em',
-                                                            color: item.status === 'done' ? 'var(--color-success)' : '#d97706',
-                                                            background: item.status === 'done'
-                                                                ? 'rgba(16,185,129,0.12)'
-                                                                : 'rgba(245,158,11,0.12)',
-                                                        }}>
-                                                            {item.status === 'done' ? 'DONE' : 'TODO'}
-                                                        </span>
-                                                        <code style={{
                                                             fontFamily: 'var(--font-mono)',
-                                                            color: 'var(--color-text)',
                                                             fontSize: 12,
+                                                            color: '#e2e8f0',
+                                                            wordBreak: 'break-all',
                                                         }}>
-                                                            {item.text}
-                                                        </code>
+                                                            {block.title || 'Code Block'}
+                                                        </span>
+                                                        <span style={{
+                                                            fontSize: 10,
+                                                            textTransform: 'uppercase',
+                                                            letterSpacing: '0.06em',
+                                                            color: '#94a3b8',
+                                                        }}>
+                                                            {inferCodeLang(block.title, block.lang)}
+                                                        </span>
                                                     </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )
-                                }
+                                                    <pre style={{
+                                                        margin: 0,
+                                                        padding: '14px 16px',
+                                                        overflowX: 'auto',
+                                                        fontSize: 12,
+                                                        lineHeight: 1.6,
+                                                        color: '#e2e8f0',
+                                                        whiteSpace: 'pre-wrap',
+                                                        wordBreak: 'break-word',
+                                                    }}>
+                                                        <code>{block.content}</code>
+                                                    </pre>
+                                                </div>
+                                            )
+                                        }
 
-                                if (block.type === 'code') {
-                                    return (
-                                        <div key={i} style={{
-                                            background: '#0f1117',
-                                            border: '1px solid rgba(148,163,184,0.18)',
-                                            borderRadius: 14,
-                                            overflow: 'hidden',
-                                            margin: '10px 0',
-                                        }}>
-                                            <div style={{
-                                                display: 'flex',
-                                                justifyContent: 'space-between',
-                                                alignItems: 'center',
-                                                gap: 12,
-                                                padding: '10px 12px',
-                                                borderBottom: '1px solid rgba(148,163,184,0.12)',
-                                                background: 'rgba(255,255,255,0.03)',
-                                            }}>
-                                                <span style={{
-                                                    fontFamily: 'var(--font-mono)',
-                                                    fontSize: 12,
-                                                    color: '#e2e8f0',
-                                                    wordBreak: 'break-all',
-                                                }}>
-                                                    {block.title || 'Code Block'}
-                                                </span>
-                                                <span style={{
-                                                    fontSize: 10,
-                                                    textTransform: 'uppercase',
-                                                    letterSpacing: '0.06em',
-                                                    color: '#94a3b8',
-                                                }}>
-                                                    {inferCodeLang(block.title, block.lang)}
-                                                </span>
-                                            </div>
-                                            <pre style={{
-                                                margin: 0,
-                                                padding: '14px 16px',
-                                                overflowX: 'auto',
-                                                fontSize: 12,
-                                                lineHeight: 1.6,
-                                                color: '#e2e8f0',
+                                        return (
+                                            <div key={i} style={{
                                                 whiteSpace: 'pre-wrap',
-                                                wordBreak: 'break-word',
+                                                margin: '8px 0',
+                                                color: 'var(--color-text)',
                                             }}>
-                                                <code>{block.content}</code>
-                                            </pre>
-                                        </div>
-                                    )
-                                }
-
-                                return (
-                                    <div key={i} style={{
-                                        whiteSpace: 'pre-wrap',
-                                        margin: '8px 0',
-                                        color: 'var(--color-text)',
-                                    }}>
-                                        {block.text}
-                                    </div>
-                                )
-                            }) : (
+                                                {block.text}
+                                            </div>
+                                        )
+                                    })}
+                                </>
+                            ) : (
                                 <div style={{
                                     display: 'flex',
                                     alignItems: 'center',
@@ -708,11 +1064,11 @@ export default function ChatPanel({
             </div>
 
             {/* Input area */}
-            <div 
-                style={{ 
-                    padding: '0 16px 16px', 
-                    background: 'var(--color-surface)', 
-                    display: 'flex', 
+            <div
+                style={{
+                    padding: '0 16px 16px',
+                    background: 'var(--color-surface)',
+                    display: 'flex',
                     justifyContent: 'center',
                     transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
                     marginTop: shouldCenterInput ? 'auto' : 0,
@@ -764,9 +1120,9 @@ export default function ChatPanel({
                             onClick={onResume}
                             title="Resume Generation"
                             className="btn btn-ghost"
-                            style={{ 
-                                padding: 8, 
-                                display: 'flex', 
+                            style={{
+                                padding: 8,
+                                display: 'flex',
                                 alignItems: 'center',
                                 color: 'var(--color-text-muted)',
                             }}
@@ -786,15 +1142,15 @@ export default function ChatPanel({
                             height: 36,
                             borderRadius: 12,
                             border: 'none',
-                            background: status === 'generating' 
-                                ? 'rgba(239,68,68,0.1)' 
-                                : prompt.trim() 
-                                    ? 'var(--color-text)' 
+                            background: status === 'generating'
+                                ? 'rgba(239,68,68,0.1)'
+                                : prompt.trim()
+                                    ? 'var(--color-text)'
                                     : 'var(--color-surface)',
-                            color: status === 'generating' 
-                                ? 'var(--color-error)' 
-                                : prompt.trim() 
-                                    ? 'var(--color-bg)' 
+                            color: status === 'generating'
+                                ? 'var(--color-error)'
+                                : prompt.trim()
+                                    ? 'var(--color-bg)'
                                     : 'var(--color-text-muted)',
                             cursor: (prompt.trim() || status === 'generating') ? 'pointer' : 'not-allowed',
                             transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',

@@ -3,7 +3,7 @@ import axios from "axios";
 import { useAgent } from "../hooks/useAgent";
 import ChatPanel from "../components/ChatPanel";
 import WebContainerPreview from "../components/WebContainerPreview";
-import FileTree from "../components/FileTree";
+import LivePreviewWorkbench from "../components/LivePreviewWorkbench";
 import SettingsPage from "./SettingsPage";
 import { Settings, Plus, MessageSquare, LogOut, LayoutDashboard, Trash2, Download, Sun, Moon, Play, Pencil } from "lucide-react";
 import { Link, useParams, useNavigate } from "react-router-dom";
@@ -11,6 +11,7 @@ import { useAuth } from "../hooks/useAuth";
 import { useTheme } from "../hooks/useTheme";
 
 type Tab = "preview" | "files";
+type PreviewPaneView = "preview" | "code" | "manual";
 const BUILDER_PREFS_KEY = "builder_page_preferences";
 
 export default function BuilderPage() {
@@ -40,6 +41,7 @@ export default function BuilderPage() {
   const [projects, setProjects] = useState<any[]>([]);
   const [showPreview, setShowPreview] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
+  const [previewPaneView, setPreviewPaneView] = useState<PreviewPaneView>("preview");
   const [availableProviders, setAvailableProviders] = useState<Array<{ id: string; name: string; models: string[] }>>([]);
   const [runningProjectId, setRunningProjectId] = useState<string | null>(null);
   const [runtimeProjectId, setRuntimeProjectId] = useState<string | null>(null);
@@ -56,6 +58,7 @@ export default function BuilderPage() {
   const [deleteTargetIds, setDeleteTargetIds] = useState<string[]>([]);
   const [deleteError, setDeleteError] = useState("");
   const [isDeletingProjects, setIsDeletingProjects] = useState(false);
+  const [editableFiles, setEditableFiles] = useState<Record<string, string>>({});
   const { theme, toggleTheme } = useTheme();
   const shouldAutoOpenGeneratedSessionRef = useRef(false);
   const skipProjectHydrationRef = useRef(false);
@@ -81,9 +84,14 @@ export default function BuilderPage() {
   }, [state.status, fileCount, state.sessionId]);
 
   useEffect(() => {
+    setEditableFiles(state.files || {});
+  }, [state.files, state.sessionId]);
+
+  useEffect(() => {
     if (state.status === 'generating') {
       setShowPreview(true);
       setIsPreviewOpen(true);
+      setPreviewPaneView("preview");
       if (state.sessionId) {
         setRuntimeProjectId(state.sessionId);
       }
@@ -336,11 +344,34 @@ export default function BuilderPage() {
       navigate(`/app/${projId}`);
       setShowPreview(true);
       setIsPreviewOpen(true);
+      setPreviewPaneView("preview");
     } catch (err: any) {
       console.error("Failed to run project runtime", err);
       alert(err?.response?.data?.detail || "Failed to run this project");
     } finally {
       setRunningProjectId(null);
+    }
+  };
+
+  const handleChangeGeneratedFile = (path: string, content: string) => {
+    setEditableFiles((prev) => ({ ...prev, [path]: content }));
+  };
+
+  const handleSaveGeneratedFile = async (path: string, content: string): Promise<boolean> => {
+    const targetProjectId = state.sessionId || id;
+    if (!token || !targetProjectId) {
+      return false;
+    }
+    try {
+      await axios.patch(
+        `/api/projects/${targetProjectId}/files`,
+        { path, content },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      return true;
+    } catch (error) {
+      console.error("Failed to save generated file", error);
+      return false;
     }
   };
 
@@ -416,6 +447,7 @@ export default function BuilderPage() {
     setIsInitialState(true);
     setShowPreview(false);
     setIsPreviewOpen(false);
+    setPreviewPaneView("preview");
     setShowLogs(false);
     setRuntimeProjectId(null);
     setIsProjectSelectionMode(false);
@@ -755,15 +787,8 @@ export default function BuilderPage() {
               transition: "all var(--transition)",
             }}
           >
-            <LayoutDashboard size={16} /> Dashboard
+            <Settings size={16} /> Settings
           </Link>
-          <button
-            onClick={toggleTheme}
-            className="btn btn-text"
-            style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: "var(--radius-md)", fontSize: 13, textAlign: "left" }}
-          >
-            {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />} {theme === "dark" ? "Light Mode" : "Dark Mode"}
-          </button>
           <button
             onClick={logout}
             style={{
@@ -837,6 +862,14 @@ export default function BuilderPage() {
                 >
                   Logs
                 </button>
+                <button
+                  onClick={toggleTheme}
+                  className="btn btn-ghost"
+                  style={{ padding: "4px 8px", fontSize: 11, borderRadius: 12 }}
+                  title="Toggle Theme"
+                >
+                  {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
+                </button>
                 <select
                   value={provider}
                   onChange={(e) => {
@@ -892,162 +925,162 @@ export default function BuilderPage() {
                 overflow: "auto",
               }}
             >
-            <div
-              style={{
-                width: "100%",
-                maxWidth: 700,
-                display: "flex",
-                flexDirection: "column",
-                gap: 32,
-                animation: "fadeIn 0.5s ease-out",
-              }}
-            >
-              {/* Header */}
-              <div style={{ textAlign: "center", marginBottom: 8 }}>
-                <h1
-                  style={{
-                    fontSize: 36,
-                    fontWeight: 700,
-                    color: "var(--color-text)",
-                    marginBottom: 12,
-                    letterSpacing: "-0.02em",
-                    lineHeight: 1.2,
-                  }}
-                >
-                  What would you like to build?
-                </h1>
-                <p
-                  style={{
-                    fontSize: 16,
-                    color: "var(--color-text-muted)",
-                    lineHeight: 1.6,
-                    maxWidth: 480,
-                    margin: "0 auto",
-                  }}
-                >
-                  Describe your idea in detail and I'll create a fully functional web application for you.
-                </p>
-              </div>
-
-              {/* Input Area */}
               <div
                 style={{
-                  background: "var(--color-surface)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: 24,
-                  padding: "16px 20px",
-                  boxShadow: "var(--shadow-lg)",
-                  transition: "all 0.3s ease",
-                  borderColor: "var(--color-border-hover)",
+                  width: "100%",
+                  maxWidth: 700,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 32,
+                  animation: "fadeIn 0.5s ease-out",
                 }}
               >
-                <textarea
-                  value={initialPrompt}
-                  onChange={(e) => setInitialPrompt(e.target.value)}
-                  onKeyDown={(e) => {
-                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                      e.preventDefault();
-                      if (initialPrompt.trim()) {
-                        shouldAutoOpenGeneratedSessionRef.current = true;
-                        generate({
-                          prompt: initialPrompt.trim(),
-                          provider,
-                          model,
-                          apiKey,
-                          projectId: state.sessionId || "",
-                        });
-                        setIsInitialState(false);
-                      }
-                    }
-                  }}
-                  placeholder="e.g., Build a modern SaaS dashboard with analytics charts, user management, and dark mode..."
-                  rows={4}
-                  autoFocus
-                  style={{
-                    width: "100%",
-                    background: "transparent",
-                    border: "none",
-                    color: "var(--color-text)",
-                    fontFamily: "var(--font-sans)",
-                    fontSize: 15,
-                    resize: "none",
-                    outline: "none",
-                    lineHeight: 1.6,
-                    minHeight: 100,
-                  }}
-                />
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginTop: 12,
-                    gap: 12,
-                  }}
-                >
-                  <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-                    Press Cmd+Enter to generate
-                  </span>
-                  <button
-                    onClick={() => {
-                      if (initialPrompt.trim()) {
-                        shouldAutoOpenGeneratedSessionRef.current = true;
-                        generate({
-                          prompt: initialPrompt.trim(),
-                          provider,
-                          model,
-                          apiKey,
-                          projectId: state.sessionId || "",
-                        });
-                        setIsInitialState(false);
-                      }
-                    }}
-                    disabled={!initialPrompt.trim()}
-                    className="btn btn-primary"
+                {/* Header */}
+                <div style={{ textAlign: "center", marginBottom: 8 }}>
+                  <h1
                     style={{
-                      padding: "10px 24px",
-                      fontSize: 14,
-                      opacity: !initialPrompt.trim() ? 0.5 : 1,
-                      cursor: !initialPrompt.trim() ? "not-allowed" : "pointer",
+                      fontSize: 36,
+                      fontWeight: 700,
+                      color: "var(--color-text)",
+                      marginBottom: 12,
+                      letterSpacing: "-0.02em",
+                      lineHeight: 1.2,
                     }}
                   >
-                    Generate App
-                  </button>
+                    What would you like to build?
+                  </h1>
+                  <p
+                    style={{
+                      fontSize: 16,
+                      color: "var(--color-text-muted)",
+                      lineHeight: 1.6,
+                      maxWidth: 480,
+                      margin: "0 auto",
+                    }}
+                  >
+                    Describe your idea in detail and I'll create a fully functional web application for you.
+                  </p>
                 </div>
-              </div>
 
-              {/* Example Prompts */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <div style={{ textAlign: "center" }}>
-                  <span style={{ fontSize: 12, color: "var(--color-text-muted)", fontWeight: 500 }}>
-                    Try an example
-                  </span>
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
-                  {[
-                    "Build a SaaS dashboard with charts",
-                    "Create an e-commerce store",
-                    "Build a portfolio website",
-                    "Create a blog platform",
-                  ].map((ex, i) => (
+                {/* Input Area */}
+                <div
+                  style={{
+                    background: "var(--color-surface)",
+                    border: "1px solid var(--color-border)",
+                    borderRadius: 24,
+                    padding: "16px 20px",
+                    boxShadow: "var(--shadow-lg)",
+                    transition: "all 0.3s ease",
+                    borderColor: "var(--color-border-hover)",
+                  }}
+                >
+                  <textarea
+                    value={initialPrompt}
+                    onChange={(e) => setInitialPrompt(e.target.value)}
+                    onKeyDown={(e) => {
+                      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                        e.preventDefault();
+                        if (initialPrompt.trim()) {
+                          shouldAutoOpenGeneratedSessionRef.current = true;
+                          generate({
+                            prompt: initialPrompt.trim(),
+                            provider,
+                            model,
+                            apiKey,
+                            projectId: state.sessionId || "",
+                          });
+                          setIsInitialState(false);
+                        }
+                      }
+                    }}
+                    placeholder="e.g., Build a modern SaaS dashboard with analytics charts, user management, and dark mode..."
+                    rows={4}
+                    autoFocus
+                    style={{
+                      width: "100%",
+                      background: "transparent",
+                      border: "none",
+                      color: "var(--color-text)",
+                      fontFamily: "var(--font-sans)",
+                      fontSize: 15,
+                      resize: "none",
+                      outline: "none",
+                      lineHeight: 1.6,
+                      minHeight: 100,
+                    }}
+                  />
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginTop: 12,
+                      gap: 12,
+                    }}
+                  >
+                    <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+                      Press Cmd+Enter to generate
+                    </span>
                     <button
-                      key={i}
-                      onClick={() => setInitialPrompt(ex)}
-                      className="btn btn-ghost"
+                      onClick={() => {
+                        if (initialPrompt.trim()) {
+                          shouldAutoOpenGeneratedSessionRef.current = true;
+                          generate({
+                            prompt: initialPrompt.trim(),
+                            provider,
+                            model,
+                            apiKey,
+                            projectId: state.sessionId || "",
+                          });
+                          setIsInitialState(false);
+                        }
+                      }}
+                      disabled={!initialPrompt.trim()}
+                      className="btn btn-primary"
                       style={{
-                        padding: "10px 18px",
-                        fontSize: 13,
-                        borderRadius: 20,
-                        border: "1px solid var(--color-border)",
-                        background: "var(--color-surface2)",
+                        padding: "10px 24px",
+                        fontSize: 14,
+                        opacity: !initialPrompt.trim() ? 0.5 : 1,
+                        cursor: !initialPrompt.trim() ? "not-allowed" : "pointer",
                       }}
                     >
-                      {ex}
+                      Generate App
                     </button>
-                  ))}
+                  </div>
+                </div>
+
+                {/* Example Prompts */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ textAlign: "center" }}>
+                    <span style={{ fontSize: 12, color: "var(--color-text-muted)", fontWeight: 500 }}>
+                      Try an example
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+                    {[
+                      "Build a SaaS dashboard with charts",
+                      "Create an e-commerce store",
+                      "Build a portfolio website",
+                      "Create a blog platform",
+                    ].map((ex, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setInitialPrompt(ex)}
+                        className="btn btn-ghost"
+                        style={{
+                          padding: "10px 18px",
+                          fontSize: 13,
+                          borderRadius: 20,
+                          border: "1px solid var(--color-border)",
+                          background: "var(--color-surface2)",
+                        }}
+                      >
+                        {ex}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
             </div>
           </div>
         ) : (
@@ -1110,207 +1143,274 @@ export default function BuilderPage() {
                 overflow: "hidden",
               }}
             >
-            {/* Live Preview Panel - Right Side */}
-            <div
-              className="preview-panel"
-              style={{
-                display: isPreviewOpen ? "flex" : "none",
-                flexDirection: "column",
-                overflow: "hidden",
-                background: "var(--color-bg)",
-                borderRight: "1px solid var(--color-border)",
-              }}
-            >
+              {/* Live Preview Panel - Right Side */}
               <div
+                className="preview-panel"
                 style={{
-                  padding: "10px 14px",
-                  background: "var(--color-surface)",
-                  borderBottom: "1px solid var(--color-border)",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  flexShrink: 0,
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>Live Preview</span>
-                  {state.status === "generating" && (
-                    <span
-                      style={{
-                        fontSize: 10,
-                        padding: "2px 8px",
-                        borderRadius: 999,
-                        background: "rgba(99,102,241,0.15)",
-                        color: "var(--color-primary)",
-                        fontWeight: 500,
-                      }}
-                    >
-                      Generating...
-                    </span>
-                  )}
-                </div>
-                {state.status !== "generating" && (
-                  <button
-                    onClick={() => {
-                      setIsPreviewOpen(false);
-                      setShowPreview(false);
-                    }}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: "var(--color-text-muted)",
-                      cursor: "pointer",
-                      padding: 4,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      borderRadius: 4,
-                      transition: "all 0.2s",
-                    }}
-                    title="Close Preview"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M18 6L6 18M6 6l12 12" />
-                    </svg>
-                  </button>
-                )}
-              </div>
-              <div className="preview-content" style={{ flex: 1, position: "relative", overflow: "hidden" }}>
-                <WebContainerPreview
-                  files={state.files}
-                  sessionId={state.sessionId}
-                  generationStatus={state.status}
-                  allowHostPreview={state.status === "generating" || (Boolean(state.sessionId) && runtimeProjectId === state.sessionId)}
-                />
-              </div>
-            </div>
-
-            {/* Chat Panel - Left Side */}
-            <div className="chat-panel" style={{ display: "flex", flexDirection: "column", overflow: "hidden", position: "relative", flex: 1, minHeight: 0 }}>
-              <ChatPanel
-                output={state.output}
-                status={state.status}
-                onGenerate={(prompt) => {
-                  generate({ prompt, provider, model, apiKey, projectId: state.sessionId || "" });
-                  setIsInitialState(false);
-                }}
-                onResume={() =>
-                  resumeGeneration({
-                    prompt: "",
-                    provider,
-                    model,
-                    apiKey,
-                    projectId: state.sessionId || "",
-                  })
-                }
-                onStop={stop}
-                onReset={() => {
-                  reset();
-                  setInitialPrompt("");
-                  setIsInitialState(true);
-                }}
-                provider={provider}
-                model={model}
-                apiKey={apiKey}
-                availableProviders={availableProviders}
-                onProviderChange={(p, m, k) => {
-                  setProvider(p);
-                  setModel(m);
-                  setApiKey(k);
-                }}
-                showPreview={showPreview}
-                setShowPreview={(v) => {
-                  setShowPreview(v);
-                  setIsPreviewOpen(v);
-                }}
-                showLogs={showLogs}
-                setShowLogs={setShowLogs}
-              />
-            </div>
-
-            {/* Narration/Logs Panel */}
-            {showLogs && (
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: 16,
-                  left: 16,
-                  right: 16,
-                  maxHeight: 280,
-                  background: "var(--color-surface)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "var(--radius-lg)",
-                  boxShadow: "var(--shadow-lg)",
-                  zIndex: 50,
-                  display: "flex",
+                  display: isPreviewOpen ? "flex" : "none",
                   flexDirection: "column",
                   overflow: "hidden",
-                  animation: "slideUp 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
+                  background: "var(--color-bg)",
+                  borderRight: "1px solid var(--color-border)",
                 }}
               >
                 <div
                   style={{
                     padding: "10px 14px",
-                    background: "var(--color-surface2)",
+                    background: "var(--color-surface)",
                     borderBottom: "1px solid var(--color-border)",
                     display: "flex",
                     justifyContent: "space-between",
                     alignItems: "center",
+                    gap: 8,
+                    flexShrink: 0,
                   }}
                 >
-                  <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)" }}>Generation Logs</span>
-                  <button
-                    onClick={() => setShowLogs(false)}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: "var(--color-text-muted)",
-                      cursor: "pointer",
-                      padding: 4,
-                    }}
-                  >
-                    ✕
-                  </button>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <button
+                      onClick={() => setPreviewPaneView("preview")}
+                      className="btn"
+                      style={{
+                        padding: "6px 12px",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        background: previewPaneView === "preview" ? "var(--color-primary)" : "var(--color-surface2)",
+                        color: previewPaneView === "preview" ? "white" : "var(--color-text)",
+                        border: "1px solid var(--color-border)",
+                      }}
+                    >
+                      Live Preview
+                    </button>
+                    <button
+                      onClick={() => setPreviewPaneView("code")}
+                      className="btn"
+                      style={{
+                        padding: "6px 12px",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        background: previewPaneView === "code" ? "var(--color-primary)" : "var(--color-surface2)",
+                        color: previewPaneView === "code" ? "white" : "var(--color-text)",
+                        border: "1px solid var(--color-border)",
+                      }}
+                    >
+                      Code
+                    </button>
+                    <button
+                      onClick={() => setPreviewPaneView("manual")}
+                      className="btn"
+                      style={{
+                        padding: "6px 12px",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        background: previewPaneView === "manual" ? "var(--color-primary)" : "var(--color-surface2)",
+                        color: previewPaneView === "manual" ? "white" : "var(--color-text)",
+                        border: "1px solid var(--color-border)",
+                      }}
+                    >
+                      Manual Edit
+                    </button>
+                    {state.status === "generating" && (
+                      <span
+                        style={{
+                          fontSize: 10,
+                          padding: "2px 8px",
+                          borderRadius: 999,
+                          background: "rgba(99,102,241,0.15)",
+                          color: "var(--color-primary)",
+                          fontWeight: 500,
+                        }}
+                      >
+                        Generating...
+                      </span>
+                    )}
+                  </div>
+                  {state.status !== "generating" && (
+                    <button
+                      onClick={() => {
+                        setIsPreviewOpen(false);
+                        setShowPreview(false);
+                      }}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        color: "var(--color-text-muted)",
+                        cursor: "pointer",
+                        padding: 4,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        borderRadius: 4,
+                        transition: "all 0.2s",
+                      }}
+                      title="Close Preview"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M18 6L6 18M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
                 </div>
                 <div
+                  className="preview-content"
                   style={{
                     flex: 1,
-                    overflowY: "auto",
-                    padding: 14,
-                    fontSize: 12,
-                    fontFamily: "var(--font-mono)",
-                    color: "var(--color-text-muted)",
+                    position: "relative",
+                    overflow: "hidden",
+                    display: "flex",
+                    flexDirection: "column",
+                    minHeight: 0,
                   }}
                 >
-                  {state.output
-                    .split("\n")
-                    .filter(
-                      (l) =>
-                        l.trim() &&
-                        (l.startsWith("📦") ||
-                          l.startsWith("✨") ||
-                          l.startsWith("📝") ||
-                          l.startsWith("🚀") ||
-                          l.startsWith("�") ||
-                          l.startsWith("🛠️") ||
-                          l.startsWith("✅") ||
-                          l.startsWith("❌") ||
-                          l.includes("Analyzing") ||
-                          l.includes("Generating") ||
-                          l.includes("Writing") ||
-                          l.includes("Installing") ||
-                          l.includes("Starting") ||
-                          l.includes("Successfully"))
-                    )
-                    .map((line, i) => (
-                      <div key={i} style={{ marginBottom: 4, display: "flex", gap: 8 }}>
-                        <span style={{ color: "var(--color-text-muted2)" }}>[{i + 1}]</span>
-                        <span>{line}</span>
-                      </div>
-                    ))}
+                  {previewPaneView === "preview" ? (
+                    <WebContainerPreview
+                      files={editableFiles}
+                      sessionId={state.sessionId}
+                      generationStatus={state.status}
+                      allowHostPreview={state.status === "generating" || (Boolean(state.sessionId) && runtimeProjectId === state.sessionId)}
+                    />
+                  ) : (
+                    <LivePreviewWorkbench
+                      files={editableFiles}
+                      output={state.output}
+                      mode={previewPaneView === "code" ? "code" : "manual"}
+                      generationStatus={state.status}
+                      onChangeFile={handleChangeGeneratedFile}
+                      onSaveFile={handleSaveGeneratedFile}
+                    />
+                  )}
                 </div>
               </div>
-            )}
+
+              {/* Chat Panel - Left Side */}
+              <div className="chat-panel" style={{ display: "flex", flexDirection: "column", overflow: "hidden", position: "relative", flex: 1, minHeight: 0 }}>
+                <ChatPanel
+                  output={state.output}
+                  status={state.status}
+                  compactLogs={true}
+                  onGenerate={(prompt) => {
+                    generate({ prompt, provider, model, apiKey, projectId: state.sessionId || "" });
+                    setIsInitialState(false);
+                  }}
+                  onResume={() =>
+                    resumeGeneration({
+                      prompt: "",
+                      provider,
+                      model,
+                      apiKey,
+                      projectId: state.sessionId || "",
+                    })
+                  }
+                  onStop={stop}
+                  onReset={() => {
+                    reset();
+                    setInitialPrompt("");
+                    setIsInitialState(true);
+                  }}
+                  provider={provider}
+                  model={model}
+                  apiKey={apiKey}
+                  availableProviders={availableProviders}
+                  onProviderChange={(p, m, k) => {
+                    setProvider(p);
+                    setModel(m);
+                    setApiKey(k);
+                  }}
+                  showPreview={showPreview}
+                  setShowPreview={(v) => {
+                    setShowPreview(v);
+                    setIsPreviewOpen(v);
+                    if (v) {
+                      setPreviewPaneView("preview");
+                    }
+                  }}
+                  showLogs={showLogs}
+                  setShowLogs={setShowLogs}
+                />
+              </div>
+
+              {/* Narration/Logs Panel */}
+              {showLogs && (
+                <div
+                  style={{
+                    position: "absolute",
+                    bottom: 16,
+                    left: 16,
+                    right: 16,
+                    maxHeight: 280,
+                    background: "var(--color-surface)",
+                    border: "1px solid var(--color-border)",
+                    borderRadius: "var(--radius-lg)",
+                    boxShadow: "var(--shadow-lg)",
+                    zIndex: 50,
+                    display: "flex",
+                    flexDirection: "column",
+                    overflow: "hidden",
+                    animation: "slideUp 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
+                  }}
+                >
+                  <div
+                    style={{
+                      padding: "10px 14px",
+                      background: "var(--color-surface2)",
+                      borderBottom: "1px solid var(--color-border)",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                    }}
+                  >
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)" }}>Generation Logs</span>
+                    <button
+                      onClick={() => setShowLogs(false)}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        color: "var(--color-text-muted)",
+                        cursor: "pointer",
+                        padding: 4,
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div
+                    style={{
+                      flex: 1,
+                      overflowY: "auto",
+                      padding: 14,
+                      fontSize: 12,
+                      fontFamily: "var(--font-mono)",
+                      color: "var(--color-text-muted)",
+                    }}
+                  >
+                    {state.output
+                      .split("\n")
+                      .filter(
+                        (l) =>
+                          l.trim() &&
+                          (l.startsWith("📦") ||
+                            l.startsWith("✨") ||
+                            l.startsWith("📝") ||
+                            l.startsWith("🚀") ||
+                            l.startsWith("�") ||
+                            l.startsWith("🛠️") ||
+                            l.startsWith("✅") ||
+                            l.startsWith("❌") ||
+                            l.includes("Analyzing") ||
+                            l.includes("Generating") ||
+                            l.includes("Writing") ||
+                            l.includes("Installing") ||
+                            l.includes("Starting") ||
+                            l.includes("Successfully"))
+                      )
+                      .map((line, i) => (
+                        <div key={i} style={{ marginBottom: 4, display: "flex", gap: 8 }}>
+                          <span style={{ color: "var(--color-text-muted2)" }}>[{i + 1}]</span>
+                          <span>{line}</span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}
