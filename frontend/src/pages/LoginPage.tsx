@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { Zap, Loader2, ArrowRight, Github, Sun, Moon } from "lucide-react";
+import { Loader2, ArrowRight, Github, Sun, Moon } from "lucide-react";
 import axios from "axios";
 import { useAuth } from "../hooks/useAuth";
 import { useTheme } from "../hooks/useTheme";
 
-const backendPublicUrl = (import.meta.env.VITE_BACKEND_PUBLIC_URL as string | undefined)?.trim() || "http://localhost:8080";
-const frontendOrigin = typeof window !== "undefined" ? window.location.origin : "";
+const backendPublicUrl =
+  (import.meta.env.VITE_BACKEND_PUBLIC_URL as string | undefined)?.trim() ||
+  "http://localhost:8080";
+const frontendOrigin =
+  typeof window !== "undefined" ? window.location.origin : "";
 const githubAuthUrl = `${backendPublicUrl.replace(/\/+$/, "")}/auth/github?frontend=${encodeURIComponent(frontendOrigin)}`;
 
 export default function LoginPage() {
@@ -41,7 +44,9 @@ export default function LoginPage() {
         });
         login(token, res.data);
         setSearchParams({}, { replace: true });
-        navigate(res.data.role === "ADMIN" ? "/admin" : "/app", { replace: true });
+        navigate(res.data.role === "ADMIN" ? "/admin" : "/app", {
+          replace: true,
+        });
       } catch (err: any) {
         setError(err.response?.data?.detail || "GitHub login failed");
         setSearchParams({}, { replace: true });
@@ -96,7 +101,8 @@ export default function LoginPage() {
           transform: "translateX(-50%)",
           width: "60%",
           height: "40%",
-          background: "radial-gradient(ellipse, var(--color-accent-muted) 0%, transparent 70%)",
+          background:
+            "radial-gradient(ellipse, var(--color-accent-muted) 0%, transparent 70%)",
           pointerEvents: "none",
         }}
       />
@@ -139,11 +145,27 @@ export default function LoginPage() {
             justifyContent: "center",
             color: "#fff",
             boxShadow: "var(--shadow-accent)",
+            fontWeight: 800,
+            fontSize: 20,
+            lineHeight: 1,
+            letterSpacing: "-0.03em",
+            transition:
+              "transform 0.25s ease, box-shadow 0.25s ease, filter 0.25s ease",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = "translateY(-4px) scale(1.05)";
+            e.currentTarget.style.boxShadow = "0 10px 20px rgba(0,0,0,0.2)";
+            e.currentTarget.style.filter = "brightness(1.05)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = "translateY(0) scale(1)";
+            e.currentTarget.style.boxShadow = "var(--shadow-accent)";
+            e.currentTarget.style.filter = "brightness(1)";
           }}
         >
-          <Zap size={18} />
+          W
         </div>
-        WAGI<span style={{ opacity: 0.5 }}>.</span>
+        WAGI<span style={{ opacity: 0.5 }}></span>
       </Link>
 
       {/* Login Card */}
@@ -196,7 +218,10 @@ export default function LoginPage() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <form
+          onSubmit={handleSubmit}
+          style={{ display: "flex", flexDirection: "column", gap: 20 }}
+        >
           <div>
             <label
               style={{

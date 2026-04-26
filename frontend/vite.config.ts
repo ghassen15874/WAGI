@@ -1,8 +1,9 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-const backendTarget = process.env.VITE_API_TARGET || "http://localhost:8080";
-const enableCrossOriginIsolation = process.env.VITE_ENABLE_CROSS_ORIGIN_ISOLATION === "true";
+const backendTarget = process.env.VITE_API_TARGET || "http://127.0.0.1:8000";
+const enableCrossOriginIsolation =
+  process.env.VITE_ENABLE_CROSS_ORIGIN_ISOLATION === "true";
 const isolationHeaders = enableCrossOriginIsolation
   ? {
       "Cross-Origin-Embedder-Policy": "require-corp",
@@ -25,7 +26,9 @@ function malformedUriGuard() {
           decodeURI(rawUrl);
         } catch {
           const repairedUrl = rawUrl.replace(/%(?![0-9A-Fa-f]{2})/g, "%25");
-          console.warn(`[vite] repaired malformed URL: ${rawUrl} -> ${repairedUrl}`);
+          console.warn(
+            `[vite] repaired malformed URL: ${rawUrl} -> ${repairedUrl}`,
+          );
           req.url = repairedUrl;
         }
 

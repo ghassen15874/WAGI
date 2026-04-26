@@ -95,6 +95,37 @@ const FeatureCard: React.FC<FeatureCardProps> = ({
     if (ref) observer.observe(ref);
     return () => observer.disconnect();
   }, [ref, delay]);
+  const howItWorksSteps = [
+    {
+      number: "01",
+      title: "Describe Your Idea",
+      description:
+        "Tell WAGI what you want to build in plain English. Our AI understands complex requirements.",
+      delay: 100,
+    },
+    {
+      number: "02",
+      title: "AI Generates Your Code",
+      description:
+        "Our AI creates a complete full-stack application automatically with best practices built-in.",
+      delay: 200,
+    },
+    {
+      number: "03",
+      title: "Review & Customize",
+      description:
+        "Preview instantly and edit with natural language instructions. Full control over your code.",
+      delay: 300,
+    },
+    {
+      number: "04",
+      title: "Deploy to Production",
+      description:
+        "One-click deployment to our global edge network. Your app is live in seconds.",
+      delay: 400,
+      isLast: true,
+    },
+  ];
 
   return (
     <div
@@ -137,8 +168,8 @@ const FeatureCard: React.FC<FeatureCardProps> = ({
       >
         {React.isValidElement(icon)
           ? React.cloneElement(icon as React.ReactElement<{ size?: number }>, {
-            size: 28,
-          })
+              size: 28,
+            })
           : icon}
       </div>
       <h3
@@ -346,7 +377,7 @@ const PricingCard: React.FC<PricingCardProps> = ({
 };
 
 interface StepCardProps {
-  icon: React.ReactElement<{ size?: number }>;
+  number: string;
   title: string;
   description: string;
   delay?: number;
@@ -354,7 +385,7 @@ interface StepCardProps {
 }
 
 const StepCard: React.FC<StepCardProps> = ({
-  icon,
+  number,
   title,
   description,
   delay = 0,
@@ -370,7 +401,7 @@ const StepCard: React.FC<StepCardProps> = ({
           setTimeout(() => setIsVisible(true), delay);
         }
       },
-      { threshold: 0.3 },
+      { threshold: 0.25 },
     );
 
     if (ref) observer.observe(ref);
@@ -382,34 +413,38 @@ const StepCard: React.FC<StepCardProps> = ({
       ref={setRef as any}
       style={{
         display: "grid",
-        gridTemplateColumns: "auto 1fr",
-        gap: "32px",
+        gridTemplateColumns: "72px 1fr",
+        gap: "24px",
         alignItems: "center",
         position: "relative",
         opacity: isVisible ? 1 : 0,
-        transform: isVisible ? "translateX(0)" : "translateX(-30px)",
+        transform: isVisible ? "translateY(0)" : "translateY(24px)",
         transition: "all 0.8s cubic-bezier(0.16, 1, 0.3, 1)",
+        padding: "24px 28px",
+        borderRadius: "24px",
+        background: "transparent",
       }}
     >
       {!isLast && (
         <div
           style={{
             position: "absolute",
-            left: "28px",
-            top: "80px",
-            bottom: "-40px",
+            left: "35px",
+            top: "88px",
+            bottom: "-28px",
             width: "2px",
             background:
               "linear-gradient(180deg, var(--color-accent) 0%, transparent 100%)",
-            opacity: 0.3,
+            opacity: 0.25,
           }}
         />
       )}
+
       <div
         style={{
           width: "56px",
           height: "56px",
-          borderRadius: "16px",
+          borderRadius: "18px",
           background:
             "linear-gradient(135deg, var(--color-accent) 0%, #a78bfa 100%)",
           display: "flex",
@@ -418,56 +453,36 @@ const StepCard: React.FC<StepCardProps> = ({
           fontSize: "18px",
           fontWeight: 800,
           color: "#000",
-          boxShadow: "0 8px 24px rgba(139, 92, 246, 0.3)",
+          boxShadow: "0 10px 28px rgba(139, 92, 246, 0.28)",
           position: "relative",
           zIndex: 1,
+          flexShrink: 0,
         }}
       >
-        {React.isValidElement(icon)
-          ? React.cloneElement(icon, { size: 24 })
-          : icon}
+        {number}
       </div>
-      <div style={{ display: "flex", gap: "24px", alignItems: "center" }}>
-        <div
+
+      <div>
+        <h3
           style={{
-            width: "64px",
-            height: "64px",
-            borderRadius: "20px",
-            background: "var(--color-surface)",
-            border: "1px solid var(--color-border)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "var(--color-accent)",
-            flexShrink: 0,
-            boxShadow: "0 4px 16px rgba(0,0,0,0.1)",
+            fontSize: "22px",
+            fontWeight: 700,
+            marginBottom: "8px",
+            letterSpacing: "-0.02em",
           }}
         >
-          {React.isValidElement(icon)
-            ? React.cloneElement(icon, { size: 28 })
-            : icon}
-        </div>
-        <div>
-          <h3
-            style={{
-              fontSize: "22px",
-              fontWeight: 700,
-              marginBottom: "8px",
-              letterSpacing: "-0.02em",
-            }}
-          >
-            {title}
-          </h3>
-          <p
-            style={{
-              color: "var(--color-text-muted)",
-              lineHeight: 1.6,
-              fontSize: "15px",
-            }}
-          >
-            {description}
-          </p>
-        </div>
+          {title}
+        </h3>
+        <p
+          style={{
+            color: "var(--color-text-muted)",
+            lineHeight: 1.7,
+            fontSize: "15px",
+            margin: 0,
+          }}
+        >
+          {description}
+        </p>
       </div>
     </div>
   );
@@ -476,6 +491,41 @@ const StepCard: React.FC<StepCardProps> = ({
 export default function LandingPage() {
   const [heroVisible, setHeroVisible] = useState(false);
   const { user } = useAuth();
+  const howItWorksSteps = [
+    {
+      number: "01",
+      title: "Describe Your Idea",
+      description:
+        "Tell WAGI what you want to build in plain English. Our AI understands complex requirements.",
+      delay: 100,
+    },
+    {
+      number: "02",
+      title: "AI Generates Your Code",
+      description:
+        "Our AI creates a complete full-stack application automatically with best practices built-in.",
+      delay: 200,
+    },
+    {
+      number: "03",
+      title: "Review & Customize",
+      description:
+        "Preview instantly and edit with natural language instructions. Full control over your code.",
+      delay: 300,
+    },
+    {
+      number: "04",
+      title: "Deploy to Production",
+      description:
+        "One-click deployment to our global edge network. Your app is live in seconds.",
+      delay: 400,
+      isLast: true,
+    },
+  ];
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => setHeroVisible(true), 100);
@@ -722,92 +772,6 @@ export default function LandingPage() {
             </span>
           </a>
         </div>
-
-        {/* Hero Visual / Dashboard Preview */}
-        <div
-          style={{
-            marginTop: "80px",
-            position: "relative",
-            zIndex: 0,
-            opacity: heroVisible ? 1 : 0,
-            transform: heroVisible ? "translateY(0)" : "translateY(50px)",
-            transition: "all 1s cubic-bezier(0.16, 1, 0.3, 1) 0.6s",
-          }}
-        >
-          <div
-            style={{
-              maxWidth: 1100,
-              margin: "0 auto",
-              borderRadius: "24px",
-              background: "var(--color-surface)",
-              border: "1px solid var(--color-border)",
-              padding: "20px",
-              boxShadow:
-                "0 40px 80px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05) inset",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                gap: "6px",
-                marginBottom: "16px",
-              }}
-            >
-              <div
-                style={{
-                  width: "12px",
-                  height: "12px",
-                  borderRadius: "50%",
-                  background: "#ff5f56",
-                }}
-              />
-              <div
-                style={{
-                  width: "12px",
-                  height: "12px",
-                  borderRadius: "50%",
-                  background: "#ffbd2e",
-                }}
-              />
-              <div
-                style={{
-                  width: "12px",
-                  height: "12px",
-                  borderRadius: "50%",
-                  background: "#27ca40",
-                }}
-              />
-            </div>
-            <div
-              style={{
-                aspectRatio: "16/9",
-                borderRadius: "12px",
-                background:
-                  "linear-gradient(180deg, var(--color-bg) 0%, var(--color-surface2) 100%)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                border: "1px solid var(--color-border)",
-              }}
-            >
-              <div style={{ textAlign: "center", padding: "40px" }}>
-                <Code2
-                  size={48}
-                  style={{
-                    color: "var(--color-accent)",
-                    marginBottom: "16px",
-                    opacity: 0.8,
-                  }}
-                />
-                <p
-                  style={{ color: "var(--color-text-muted)", fontSize: "14px" }}
-                >
-                  Interactive preview coming soon
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
       </header>
 
       {/* Features Section */}
@@ -828,23 +792,6 @@ export default function LandingPage() {
               margin: "0 auto 80px",
             }}
           >
-            <div
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "8px",
-                padding: "10px 20px",
-                borderRadius: "50px",
-                background: "rgba(139, 92, 246, 0.1)",
-                fontSize: "13px",
-                fontWeight: 600,
-                color: "var(--color-accent)",
-                marginBottom: "28px",
-                border: "1px solid rgba(139, 92, 246, 0.2)",
-              }}
-            >
-              <Zap size={14} /> Platform Features
-            </div>
             <h2
               style={{
                 fontSize: "clamp(36px, 5vw, 52px)",
@@ -963,23 +910,6 @@ export default function LandingPage() {
               margin: "0 auto 80px",
             }}
           >
-            <div
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "8px",
-                padding: "10px 20px",
-                borderRadius: "50px",
-                background: "rgba(139, 92, 246, 0.1)",
-                fontSize: "13px",
-                fontWeight: 600,
-                color: "var(--color-accent)",
-                marginBottom: "28px",
-                border: "1px solid rgba(139, 92, 246, 0.2)",
-              }}
-            >
-              <Play size={14} /> How It Works
-            </div>
             <h2
               style={{
                 fontSize: "clamp(36px, 5vw, 52px)",
@@ -1008,38 +938,24 @@ export default function LandingPage() {
 
         <div
           style={{
-            maxWidth: 800,
+            maxWidth: 920,
             margin: "0 auto",
             display: "flex",
             flexDirection: "column",
-            gap: "48px",
+            gap: "28px",
+            position: "relative",
           }}
         >
-          <StepCard
-            icon={<MessageSquare size={24} />}
-            title="Describe Your Idea"
-            description="Tell WAGI what you want to build in plain English. Our AI understands complex requirements."
-            delay={100}
-          />
-          <StepCard
-            icon={<Wand2 size={24} />}
-            title="AI Generates Your Code"
-            description="Our AI creates a complete full-stack application automatically with best practices built-in."
-            delay={200}
-          />
-          <StepCard
-            icon={<Code2 size={24} />}
-            title="Review & Customize"
-            description="Preview instantly and edit with natural language instructions. Full control over your code."
-            delay={300}
-          />
-          <StepCard
-            icon={<DeployIcon size={24} />}
-            title="Deploy to Production"
-            description="One-click deployment to our global edge network. Your app is live in seconds."
-            delay={400}
-            isLast
-          />
+          {howItWorksSteps.map((step) => (
+            <StepCard
+              key={step.number}
+              number={step.number}
+              title={step.title}
+              description={step.description}
+              delay={step.delay}
+              isLast={step.isLast}
+            />
+          ))}
         </div>
       </section>
 
@@ -1075,23 +991,6 @@ export default function LandingPage() {
               margin: "0 auto 80px",
             }}
           >
-            <div
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "8px",
-                padding: "10px 20px",
-                borderRadius: "50px",
-                background: "rgba(139, 92, 246, 0.1)",
-                fontSize: "13px",
-                fontWeight: 600,
-                color: "var(--color-accent)",
-                marginBottom: "28px",
-                border: "1px solid rgba(139, 92, 246, 0.2)",
-              }}
-            >
-              <Layers size={14} /> Pricing
-            </div>
             <h2
               style={{
                 fontSize: "clamp(36px, 5vw, 52px)",

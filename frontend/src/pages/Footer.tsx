@@ -1,6 +1,6 @@
 import React from "react";
 import { Link } from "react-router-dom";
-import { Zap, Github, Twitter, Linkedin, Youtube } from "lucide-react";
+import { Github, Twitter, Linkedin, Youtube } from "lucide-react";
 
 interface FooterLink {
   label: string;
@@ -76,7 +76,6 @@ const Footer: React.FC = () => {
           }}
           className="footer-grid"
         >
-          {/* Brand Column */}
           <div>
             <Link
               to="/"
@@ -90,6 +89,25 @@ const Footer: React.FC = () => {
                 marginBottom: 16,
                 textDecoration: "none",
                 color: "inherit",
+                width: "fit-content",
+                transition: "transform 0.25s ease, filter 0.25s ease",
+                outline: "none",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = "translateY(-2px)";
+                e.currentTarget.style.filter = "brightness(1.05)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = "translateY(0)";
+                e.currentTarget.style.filter = "brightness(1)";
+              }}
+              onFocus={(e) => {
+                e.currentTarget.style.transform = "translateY(-2px)";
+                e.currentTarget.style.filter = "brightness(1.05)";
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.transform = "translateY(0)";
+                e.currentTarget.style.filter = "brightness(1)";
               }}
             >
               <div
@@ -103,12 +121,28 @@ const Footer: React.FC = () => {
                   justifyContent: "center",
                   color: "#fff",
                   boxShadow: "var(--shadow-accent)",
+                  fontWeight: 800,
+                  fontSize: 20,
+                  lineHeight: 1,
+                  letterSpacing: "-0.03em",
+                  transition: "transform 0.25s ease, box-shadow 0.25s ease, filter 0.25s ease",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = "translateY(-4px) scale(1.05)";
+                  e.currentTarget.style.boxShadow = "0 12px 24px rgba(0,0,0,0.22)";
+                  e.currentTarget.style.filter = "brightness(1.05)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = "translateY(0) scale(1)";
+                  e.currentTarget.style.boxShadow = "var(--shadow-accent)";
+                  e.currentTarget.style.filter = "brightness(1)";
                 }}
               >
-                <Zap size={18} />
+                W
               </div>
               WAGI<span style={{ opacity: 0.5 }}>.</span>
             </Link>
+
             <p
               style={{
                 color: "var(--color-text-muted)",
@@ -121,6 +155,7 @@ const Footer: React.FC = () => {
               The future of automated development. Think. Prompt. Build.
               Deploy. All in one place.
             </p>
+
             <div style={{ display: "flex", gap: 8 }}>
               {socialLinks.map((social) => (
                 <a
@@ -140,7 +175,32 @@ const Footer: React.FC = () => {
                     justifyContent: "center",
                     color: "var(--color-text-muted)",
                     textDecoration: "none",
-                    transition: "all var(--transition)",
+                    transition: "all 0.25s ease",
+                    outline: "none",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = "translateY(-3px) scale(1.05)";
+                    e.currentTarget.style.borderColor = "var(--color-accent)";
+                    e.currentTarget.style.color = "var(--color-text)";
+                    e.currentTarget.style.boxShadow = "0 10px 24px rgba(0,0,0,0.18)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "translateY(0) scale(1)";
+                    e.currentTarget.style.borderColor = "var(--color-border)";
+                    e.currentTarget.style.color = "var(--color-text-muted)";
+                    e.currentTarget.style.boxShadow = "none";
+                  }}
+                  onFocus={(e) => {
+                    e.currentTarget.style.transform = "translateY(-3px) scale(1.05)";
+                    e.currentTarget.style.borderColor = "var(--color-accent)";
+                    e.currentTarget.style.color = "var(--color-text)";
+                    e.currentTarget.style.boxShadow = "0 0 0 3px rgba(139, 92, 246, 0.18)";
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.transform = "translateY(0) scale(1)";
+                    e.currentTarget.style.borderColor = "var(--color-border)";
+                    e.currentTarget.style.color = "var(--color-text-muted)";
+                    e.currentTarget.style.boxShadow = "none";
                   }}
                 >
                   {social.icon}
@@ -149,7 +209,6 @@ const Footer: React.FC = () => {
             </div>
           </div>
 
-          {/* Link Columns */}
           {footerColumns.map((column) => (
             <div key={column.title}>
               <h4
@@ -164,6 +223,7 @@ const Footer: React.FC = () => {
               >
                 {column.title}
               </h4>
+
               <ul
                 style={{
                   listStyle: "none",
@@ -179,12 +239,40 @@ const Footer: React.FC = () => {
                     {link.href.startsWith("#") && link.href.length > 1 ? (
                       <span
                         onClick={() => scrollToSection(link.href)}
+                        tabIndex={0}
+                        role="button"
                         style={{
                           color: "var(--color-text-muted)",
                           textDecoration: "none",
                           fontSize: 14,
                           cursor: "pointer",
-                          transition: "color var(--transition)",
+                          transition: "all 0.25s ease",
+                          display: "inline-block",
+                          borderRadius: 8,
+                          padding: "4px 0",
+                          outline: "none",
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.color = "var(--color-text)";
+                          e.currentTarget.style.transform = "translateX(4px)";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.color = "var(--color-text-muted)";
+                          e.currentTarget.style.transform = "translateX(0)";
+                        }}
+                        onFocus={(e) => {
+                          e.currentTarget.style.color = "var(--color-text)";
+                          e.currentTarget.style.transform = "translateX(4px)";
+                        }}
+                        onBlur={(e) => {
+                          e.currentTarget.style.color = "var(--color-text-muted)";
+                          e.currentTarget.style.transform = "translateX(0)";
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            scrollToSection(link.href);
+                          }
                         }}
                       >
                         {link.label}
@@ -196,7 +284,27 @@ const Footer: React.FC = () => {
                           color: "var(--color-text-muted)",
                           textDecoration: "none",
                           fontSize: 14,
-                          transition: "color var(--transition)",
+                          transition: "all 0.25s ease",
+                          display: "inline-block",
+                          borderRadius: 8,
+                          padding: "4px 0",
+                          outline: "none",
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.color = "var(--color-text)";
+                          e.currentTarget.style.transform = "translateX(4px)";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.color = "var(--color-text-muted)";
+                          e.currentTarget.style.transform = "translateX(0)";
+                        }}
+                        onFocus={(e) => {
+                          e.currentTarget.style.color = "var(--color-text)";
+                          e.currentTarget.style.transform = "translateX(4px)";
+                        }}
+                        onBlur={(e) => {
+                          e.currentTarget.style.color = "var(--color-text-muted)";
+                          e.currentTarget.style.transform = "translateX(0)";
                         }}
                       >
                         {link.label}
@@ -209,7 +317,6 @@ const Footer: React.FC = () => {
           ))}
         </div>
 
-        {/* Bottom Copyright */}
         <div
           style={{
             borderTop: "1px solid var(--color-border)",
@@ -231,27 +338,35 @@ const Footer: React.FC = () => {
           >
             © {currentYear} WAGI. All rights reserved.
           </p>
+
           <div style={{ display: "flex", gap: 24 }}>
-            <a
-              href="#"
-              style={{
-                color: "var(--color-text-muted)",
-                textDecoration: "none",
-                fontSize: 13,
-              }}
-            >
-              Privacy Policy
-            </a>
-            <a
-              href="#"
-              style={{
-                color: "var(--color-text-muted)",
-                textDecoration: "none",
-                fontSize: 13,
-              }}
-            >
-              Terms of Service
-            </a>
+            {["Privacy Policy", "Terms of Service"].map((label) => (
+              <a
+                key={label}
+                href="#"
+                style={{
+                  color: "var(--color-text-muted)",
+                  textDecoration: "none",
+                  fontSize: 13,
+                  transition: "all 0.25s ease",
+                  outline: "none",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = "var(--color-text)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = "var(--color-text-muted)";
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.color = "var(--color-text)";
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.color = "var(--color-text-muted)";
+                }}
+              >
+                {label}
+              </a>
+            ))}
           </div>
         </div>
       </div>
