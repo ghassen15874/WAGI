@@ -64,8 +64,13 @@ async def _github_request(
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
+    import socket
+    import aiohttp
+    
     url = path if path.startswith("https://") else f"{GITHUB_API_BASE}{path}"
-    async with aiohttp.ClientSession() as session:
+    connector = aiohttp.TCPConnector(family=socket.AF_INET)
+    timeout = aiohttp.ClientTimeout(total=30.0)
+    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
         async with session.request(method, url, headers=headers, json=json_body) as response:
             try:
                 data = await response.json(content_type=None)

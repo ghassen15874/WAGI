@@ -41,8 +41,9 @@ class BuildSessionPrompt:
     async def prepare(self, prompt: str) -> tuple[Any, dict[str, Any], bool]:
         resume_requested = not bool(self.pipeline_config.get("clear_sandbox_enabled", True))
         design_enabled = bool(self.pipeline_config.get("design_system_enabled", True))
+        is_crash_recovery = int(self.pipeline_config.get("resume_iteration", 0) or 0) > 0
 
-        if resume_requested:
+        if resume_requested and is_crash_recovery:
             if self.planning.restore(prompt=prompt):
                 state = self.run_state_store.load()
                 saved_design = state.get("design")

@@ -303,6 +303,9 @@ function shouldKeepCompactText(text: string) {
 
     return lines.some((line) => {
         const lower = line.toLowerCase()
+        if (line.startsWith('✨')) {
+            return true
+        }
         if (line.startsWith('- ')) {
             return errorMarkers.some((marker) => lower.includes(marker.toLowerCase()))
         }

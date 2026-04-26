@@ -11,6 +11,7 @@ from .routes import auth as auth_router
 from .routes import admin as admin_router
 from .routes import files
 from .routes import generate
+from .routes import chat as chat_router
 from .routes import github as github_router
 from .routes import projects
 from .routes import providers
@@ -36,6 +37,7 @@ app.add_middleware(SessionMiddleware, secret_key=settings.SESSION_SECRET, same_s
 
 # Routers — existing
 app.include_router(generate.router)
+app.include_router(chat_router.router)
 app.include_router(files.router)
 app.include_router(settings_router.router)
 app.include_router(providers.router)

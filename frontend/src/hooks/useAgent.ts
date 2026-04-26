@@ -126,7 +126,7 @@ export function useAgent() {
             const accessToken = localStorage.getItem('access_token') || ''
 
             const payload: any = {
-                prompt: opts.prompt,
+                message: opts.prompt, // Updated for ChatRequest
                 provider: opts.provider,
                 model: opts.model,
                 scraper_url: opts.scraperUrl || '',
@@ -135,13 +135,11 @@ export function useAgent() {
             }
 
             const trimmedApiKey = (finalApiKey || '').trim()
-            // In authenticated mode, backend is DB-authoritative and ignores client key overrides.
-            // In unauthenticated/local mode, keep explicit key support.
             if (!accessToken && trimmedApiKey) {
                 payload.api_key = finalApiKey
             }
 
-            const res = await fetch('/api/generate', {
+            const res = await fetch('/api/chat', { // Updated to hit Decision Layer
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -156,6 +154,48 @@ export function useAgent() {
                 throw new Error(err.detail || `HTTP ${res.status}`)
             }
 
+            // Check if response is stream (chat) or json (generation fallback)
+            const contentType = res.headers.get('content-type') || ''
+            if (contentType.includes('text/event-stream')) {
+                // Handle chat stream directly
+                setState(s => ({ ...s, status: 'generating' }))
+                const reader = res.body!.getReader()
+                const decoder = new TextDecoder()
+                let buffer = ''
+                let isFirstToken = true;
+
+                while (true) {
+                    const { done, value } = await reader.read()
+                    if (done) break
+
+                    buffer += decoder.decode(value, { stream: true })
+                    const lines = buffer.split('\n')
+                    buffer = lines.pop() || ''
+
+                    for (const line of lines) {
+                        const trimmed = line.trim()
+                        if (!trimmed.startsWith('data:')) continue
+                        try {
+                            const parsed = JSON.parse(trimmed.slice(5).trim())
+                            if (parsed.type === 'token') {
+                                let content = parsed.content;
+                                if (isFirstToken && content.trim() !== '') {
+                                    content = '\n\n✨ ' + content;
+                                    isFirstToken = false;
+                                }
+                                setState(s => ({ ...s, output: s.output + content }))
+                            } else if (parsed.type === 'done') {
+                                setState(s => ({ ...s, status: 'done' }))
+                            } else if (parsed.type === 'error') {
+                                throw new Error(parsed.message)
+                            }
+                        } catch (e) { }
+                    }
+                }
+                return
+            }
+
+            // Fallback: This is a generation task JSON response
             const data = await res.json()
             const sessionId = data.session_id
             activeSessionIdRef.current = sessionId

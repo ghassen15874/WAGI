@@ -832,9 +832,16 @@ class AgentLoop:
             path.strip().lower().lstrip("./").replace("\\", "/")
             for path in existing_files
         }
+        target_override = {
+            str(path).strip().lower().lstrip("./").replace("\\", "/")
+            for path in list(self.pipeline_config.get("target_files_override", []) or [])
+            if str(path).strip()
+        }
         changed = False
         for task in self.planner.tasks:
             task_path = task.path.strip().lower().lstrip("./").replace("\\", "/")
+            if task_path in target_override:
+                continue
             if task_path in existing:
                 self.planner.mark_done(task.path)
                 changed = True

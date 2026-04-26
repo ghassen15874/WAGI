@@ -1288,7 +1288,14 @@ export default function BuilderPage() {
                   status={state.status}
                   compactLogs={true}
                   onGenerate={(prompt) => {
-                    generate({ prompt, provider, model, apiKey, projectId: state.sessionId || "" });
+                    generate({
+                      prompt,
+                      provider,
+                      model,
+                      apiKey,
+                      projectId: state.sessionId || id || "",
+                      resume: Boolean(state.sessionId || id)
+                    });
                     setIsInitialState(false);
                   }}
                   onResume={() =>
