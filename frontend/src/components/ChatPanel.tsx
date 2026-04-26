@@ -530,7 +530,7 @@ export default function ChatPanel({
     const textareaRef = useRef<HTMLTextAreaElement>(null)
     const hasVisibleOutput = output.trim().length > 0
     const hasInput = prompt.trim().length > 0
-    const shouldCenterInput = !hasVisibleOutput && !isInputFocused && !hasInput && status !== 'generating'
+    const shouldCenterInput = !hasVisibleOutput && !isInputFocused && !hasInput && status === 'idle'
 
     const providerOptions = availableProviders.length ? availableProviders : FALLBACK_PROVIDERS
     const currentProvider = providerOptions.find(p => p.id === provider) || providerOptions[0]
@@ -575,77 +575,11 @@ export default function ChatPanel({
             display: 'flex',
             flexDirection: 'column',
             height: '100%',
+            flex: 1,
             background: 'var(--color-surface)',
+            borderLeft: '1px solid var(--color-border)',
+            minHeight: 0
         }}>
-            {/* Header */}
-            <div style={{
-                padding: '12px 16px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-            }}>
-                <div style={{ fontWeight: 600, fontSize: 18, color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center' }}>
-                    WAGI <span style={{ fontSize: 13, color: 'var(--color-text-muted)', opacity: 0.5, marginLeft: 4 }}>platform</span>
-                </div>
-                <div style={{ display: 'flex', gap: 6, flex: 1, justifyContent: 'flex-end', opacity: 0.5 }}>
-                    <button
-                        onClick={() => setShowPreview(!showPreview)}
-                        style={{ ...toggleButtonStyle, color: showPreview ? 'var(--color-primary)' : 'var(--color-text-muted)' }}
-                        title="Toggle Preview"
-                    >
-                        Preview
-                    </button>
-                    <button
-                        onClick={toggleTheme}
-                        style={{ ...toggleButtonStyle, color: 'var(--color-text-muted)' }}
-                        title="Toggle Theme"
-                    >
-                        {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
-                    </button>
-                    <button
-                        onClick={() => setShowLogs(!showLogs)}
-                        style={{ ...toggleButtonStyle, color: showLogs ? 'var(--color-primary)' : 'var(--color-text-muted)' }}
-                        title="Toggle Logs"
-                    >
-                        Logs
-                    </button>
-                    <select
-                        value={provider}
-                        onChange={e => {
-                            const p = providerOptions.find(x => x.id === e.target.value) || providerOptions[0]
-                            onProviderChange(p.id, p.models[0], apiKey)
-                        }}
-                        style={{ ...selectStyle, maxWidth: 120, background: 'transparent', border: 'none' }}
-                    >
-                        {providerOptions.map(p => (
-                            <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
-                    </select>
-                    <select
-                        value={model}
-                        onChange={e => onProviderChange(provider, e.target.value, apiKey)}
-                        style={{ ...selectStyle, maxWidth: 120, background: 'transparent', border: 'none' }}
-                        disabled={!currentProvider || currentProvider.models.length === 0}
-                    >
-                        {(currentProvider?.models || []).map(m => (
-                            <option key={m} value={m}>{m}</option>
-                        ))}
-                    </select>
-                </div>
-                {status !== 'idle' && (
-                    <button
-                        onClick={onReset}
-                        style={{
-                            background: 'transparent', border: 'none', color: 'var(--color-text-muted)',
-                            cursor: 'pointer', padding: 4, display: 'flex'
-                        }}
-                        title="Reset Chat"
-                    >
-                        <RotateCcw size={16} />
-                    </button>
-                )}
-            </div>
-
             {/* Output area */}
             <div
                 ref={outputRef}
@@ -659,12 +593,19 @@ export default function ChatPanel({
                     whiteSpace: 'pre-wrap',
                     wordBreak: 'break-word',
                     color: 'var(--color-text)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    minHeight: 0
                 }}
             >
                 <div style={{
                     maxWidth: 720,
-                    margin: '0 auto',
+                    margin: shouldCenterInput ? 'auto' : '0 auto',
                     width: '100%',
+                    flex: hasVisibleOutput ? 0 : 1,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    marginTop: hasVisibleOutput ? 'auto' : undefined
                 }}>
                     {(hasVisibleOutput || status === 'generating') ? (
                         <span className={status === 'generating' ? '' : 'animate-fadeIn'}>
@@ -1047,7 +988,7 @@ export default function ChatPanel({
                             )}
                         </span>
                     ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 30, marginTop: '15vh' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 30, flex: 1 }}>
                             <h2 style={{ fontSize: 24, fontWeight: 600, color: 'var(--color-text)' }}>What can I uniquely help with?</h2>
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', maxWidth: 400 }}>
                                 {examples.map((ex, i) => (
@@ -1074,7 +1015,7 @@ export default function ChatPanel({
                     display: 'flex',
                     justifyContent: 'center',
                     transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
-                    marginTop: shouldCenterInput ? 'auto' : 0,
+                    marginTop: shouldCenterInput ? 'auto' : 'auto',
                     marginBottom: shouldCenterInput ? 'auto' : 0,
                 }}
             >

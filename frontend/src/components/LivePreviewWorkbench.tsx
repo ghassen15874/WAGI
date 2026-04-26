@@ -1,6 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import Editor from "@monaco-editor/react";
-import { Save, Sparkles } from "lucide-react";
+import {
+    Save, Sparkles, FileCode, Edit3, Palette, Check,
+    ChevronDown, RefreshCw, Layers, Layout, Type, MousePointer2, Search,
+    FileJson, FileText, File
+} from "lucide-react";
 
 interface LivePreviewWorkbenchProps {
     files: Record<string, string>;
@@ -9,6 +14,190 @@ interface LivePreviewWorkbenchProps {
     generationStatus: "idle" | "generating" | "done" | "error";
     onChangeFile: (path: string, content: string) => void;
     onSaveFile: (path: string, content: string) => Promise<boolean>;
+}
+
+function CustomSearchSelect({
+    value,
+    options,
+    onChange,
+    placeholder
+}: {
+    value: string;
+    options: string[];
+    onChange: (val: string) => void;
+    placeholder: string;
+}) {
+    const [isOpen, setIsOpen] = useState(false);
+    const [search, setSearch] = useState("");
+    const containerRef = useRef<HTMLDivElement>(null);
+    const [coords, setCoords] = useState({ top: 0, left: 0, width: 0 });
+
+    useLayoutEffect(() => {
+        if (isOpen && containerRef.current) {
+            const rect = containerRef.current.getBoundingClientRect();
+            setCoords({
+                top: rect.bottom + window.scrollY,
+                left: rect.left + window.scrollX,
+                width: rect.width
+            });
+        }
+    }, [isOpen]);
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+                // If the target is in the portal, don't close. 
+                // But portals to document.body are outside. 
+                // We'll trust the portal handles clicks or check event target.
+                const portalNode = document.getElementById('workbench-dropdown-portal');
+                if (portalNode && portalNode.contains(event.target as Node)) return;
+                setIsOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
+    const filtered = options.filter(opt =>
+        opt.toLowerCase().includes(search.toLowerCase())
+    );
+
+    const getFileIcon = (path: string) => {
+        if (path.endsWith('.json')) return <FileJson size={14} />;
+        if (path.endsWith('.css')) return <Palette size={14} />;
+        if (path.endsWith('.tsx') || path.endsWith('.ts') || path.endsWith('.js')) return <FileCode size={14} />;
+        if (path.endsWith('.html')) return <Layout size={14} />;
+        if (path.endsWith('.md')) return <FileText size={14} />;
+        return <File size={14} />;
+    };
+
+    const dropdownMenu = isOpen && (
+        <div
+            id="workbench-dropdown-portal"
+            className="glass"
+            style={{
+                position: "absolute",
+                top: coords.top + 8,
+                left: coords.left,
+                width: coords.width,
+                zIndex: 10000,
+                maxHeight: 320,
+                overflow: "hidden",
+                display: "flex",
+                flexDirection: "column",
+                borderRadius: 16,
+                boxShadow: "var(--shadow-xl)",
+                animation: "fadeIn 0.2s ease forwards",
+                padding: 8,
+                border: '1px solid var(--color-border)',
+                background: 'var(--color-surface)',
+                backdropFilter: 'blur(16px)'
+            }}
+        >
+            <div style={{ position: 'relative', marginBottom: 6 }}>
+                <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', opacity: 0.3 }} />
+                <input
+                    autoFocus
+                    placeholder="Search files..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Escape') setIsOpen(false);
+                        if (e.key === 'Enter' && filtered.length > 0) {
+                            onChange(filtered[0]);
+                            setIsOpen(false);
+                            setSearch("");
+                        }
+                    }}
+                    style={{
+                        width: '100%',
+                        padding: '10px 12px 10px 36px',
+                        background: 'var(--color-surface3)',
+                        border: '1px solid var(--color-border)',
+                        borderRadius: 10,
+                        fontSize: 13,
+                        color: 'var(--color-text)',
+                        outline: 'none'
+                    }}
+                />
+            </div>
+
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+                {filtered.length === 0 ? (
+                    <div style={{ padding: '20px', textAlign: 'center', fontSize: 12, color: 'var(--color-text-muted)' }}>
+                        No files found
+                    </div>
+                ) : (
+                    filtered.map((opt) => (
+                        <div
+                            key={opt}
+                            onClick={() => {
+                                onChange(opt);
+                                setIsOpen(false);
+                                setSearch("");
+                            }}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 10,
+                                padding: '10px 12px',
+                                borderRadius: 8,
+                                fontSize: 13,
+                                fontWeight: value === opt ? 700 : 500,
+                                background: value === opt ? 'var(--color-accent-muted)' : 'transparent',
+                                color: value === opt ? 'var(--color-accent)' : 'var(--color-text)',
+                                cursor: 'pointer',
+                            }}
+                            onMouseEnter={(e) => {
+                                if (value !== opt) e.currentTarget.style.background = 'var(--color-surface2)';
+                            }}
+                            onMouseLeave={(e) => {
+                                if (value !== opt) e.currentTarget.style.background = 'transparent';
+                            }}
+                        >
+                            <div style={{ opacity: 0.5 }}>{getFileIcon(opt)}</div>
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{opt}</span>
+                            {value === opt && <Check size={14} style={{ marginLeft: 'auto' }} />}
+                        </div>
+                    ))
+                )}
+            </div>
+        </div>
+    );
+
+    return (
+        <div ref={containerRef} style={{ position: "relative", width: "100%", maxWidth: 300 }}>
+            <div
+                onClick={() => setIsOpen(!isOpen)}
+                style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    padding: "10px 16px",
+                    background: "var(--color-surface2)",
+                    border: "1px solid var(--color-border)",
+                    borderRadius: 12,
+                    cursor: "pointer",
+                    fontSize: 14,
+                    fontWeight: 500,
+                    transition: "all var(--transition)",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.borderColor = "var(--color-accent-muted)"}
+                onMouseLeave={(e) => !isOpen && (e.currentTarget.style.borderColor = "var(--color-border)")}
+            >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, overflow: 'hidden' }}>
+                    <div style={{ opacity: 0.5, flexShrink: 0 }}>{getFileIcon(value)}</div>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {value || placeholder}
+                    </span>
+                </div>
+                <ChevronDown size={16} style={{ transition: 'transform 0.2s', transform: isOpen ? 'rotate(180deg)' : 'none', opacity: 0.5 }} />
+            </div>
+
+            {isOpen && createPortal(dropdownMenu, document.body)}
+        </div>
+    );
 }
 
 type PaletteKey =
@@ -292,118 +481,70 @@ export default function LivePreviewWorkbench({
         setSaveMessage(ok ? `Saved ${selectedFile}` : `Failed to save ${selectedFile}`);
     };
 
-    const handleSaveManualTarget = async () => {
-        if (!manualTargetFile) return;
-        setIsSaving(true);
-        const ok = await onSaveFile(manualTargetFile, allFiles[manualTargetFile] || "");
-        setIsSaving(false);
-        setSaveMessage(ok ? `Saved ${manualTargetFile}` : `Failed to save ${manualTargetFile}`);
-    };
-
     if (mode === "code") {
         return (
-            <div
-                style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    minHeight: 0,
-                    height: "100%",
-                    padding: 12,
-                    background: "var(--color-surface)",
-                    gap: 8,
-                }}
-            >
-                <div
-                    style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        padding: "8px 10px",
-                        border: "1px solid var(--color-border)",
-                        borderRadius: 10,
-                        background: "var(--color-surface2)",
-                        flexShrink: 0,
-                    }}
-                >
-                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
-                        File Code (Monaco Editor)
-                    </span>
-                    {generationStatus === "generating" && selectedFile && streamedFiles[selectedFile] && (
-                        <span
-                            style={{
-                                fontSize: 10,
-                                borderRadius: 999,
-                                padding: "2px 8px",
-                                background: "rgba(99,102,241,0.15)",
-                                color: "var(--color-primary)",
-                                fontWeight: 600,
-                                letterSpacing: "0.03em",
-                            }}
+            <div style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--color-bg)", padding: '16px', gap: '12px' }}>
+                {/* Monaco Header */}
+                <div className="glass" style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '12px 20px',
+                    gap: '16px',
+                    borderRadius: 'var(--radius-lg)'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--color-accent-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <FileCode size={18} color="var(--color-accent)" />
+                        </div>
+                        <div>
+                            <div style={{ fontSize: 13, fontWeight: 700 }}>Code Editor</div>
+                            <div style={{ fontSize: 10, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{selectedFile}</div>
+                        </div>
+                        {generationStatus === "generating" && (
+                            <div style={{ marginLeft: 12, display: 'flex', alignItems: 'center', gap: 6, padding: '2px 10px', borderRadius: 20, background: 'var(--color-primary-glow)', border: '1px solid var(--color-border)' }}>
+                                <RefreshCw size={12} className="animate-spin" />
+                                <span style={{ fontSize: 10, fontWeight: 700 }}>STREAMING CONTENT</span>
+                            </div>
+                        )}
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <CustomSearchSelect
+                            value={selectedFile}
+                            options={filePaths}
+                            onChange={setSelectedFile}
+                            placeholder="Select file..."
+                        />
+
+                        <button
+                            onClick={handleSaveCurrentFile}
+                            disabled={!selectedFile || isSaving}
+                            className="btn btn-primary"
+                            style={{ height: '38px', padding: '0 20px', gap: 8, fontSize: 13 }}
                         >
-                            STREAMING
-                        </span>
-                    )}
-                    <select
-                        value={selectedFile}
-                        onChange={(event) => setSelectedFile(event.target.value)}
-                        style={{
-                            marginLeft: "auto",
-                            maxWidth: 360,
-                            background: "var(--color-surface)",
-                            color: "var(--color-text)",
-                            border: "1px solid var(--color-border)",
-                            borderRadius: 8,
-                            padding: "6px 8px",
-                            fontSize: 12,
-                        }}
-                    >
-                        {filePaths.map((path) => (
-                            <option key={path} value={path}>
-                                {path}
-                            </option>
-                        ))}
-                    </select>
-                    <button
-                        onClick={handleSaveCurrentFile}
-                        disabled={!selectedFile || isSaving}
-                        className="btn btn-primary"
-                        style={{ padding: "6px 10px", fontSize: 12 }}
-                    >
-                        <Save size={13} /> {isSaving ? "Saving..." : "Save File"}
-                    </button>
+                            {isSaving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                            Save File
+                        </button>
+                    </div>
                 </div>
 
-                <div style={{ flex: 1, minHeight: 0, border: "1px solid var(--color-border)", borderRadius: 10, overflow: "hidden" }}>
+                {/* Editor Container */}
+                <div style={{ flex: 1, minHeight: 0, borderRadius: 'var(--radius-lg)', overflow: 'hidden', border: '1px solid var(--color-border)', boxShadow: 'var(--shadow-lg)' }}>
                     <Editor
                         height="100%"
-                        language={
-                            selectedFile.endsWith(".tsx")
-                                ? "typescript"
-                                : selectedFile.endsWith(".ts")
-                                    ? "typescript"
-                                    : selectedFile.endsWith(".jsx")
-                                        ? "javascript"
-                                        : selectedFile.endsWith(".js")
-                                            ? "javascript"
-                                            : selectedFile.endsWith(".json")
-                                                ? "json"
-                                                : selectedFile.endsWith(".css")
-                                                    ? "css"
-                                                    : "plaintext"
-                        }
+                        language={getEditorLanguage(selectedFile)}
                         theme="vs-dark"
                         value={currentCode}
-                        onChange={(value) => {
-                            if (!selectedFile) return;
-                            onChangeFile(selectedFile, value ?? "");
-                        }}
+                        onChange={(val) => selectedFile && onChangeFile(selectedFile, val || "")}
                         options={{
                             minimap: { enabled: false },
-                            fontSize: 12,
+                            fontSize: 13,
                             lineNumbers: "on",
                             wordWrap: "on",
                             scrollBeyondLastLine: false,
                             automaticLayout: true,
+                            padding: { top: 16 }
                         }}
                     />
                 </div>
@@ -412,149 +553,151 @@ export default function LivePreviewWorkbench({
     }
 
     return (
-        <div
-            style={{
-                border: "1px solid var(--color-border)",
-                borderRadius: 10,
-                background: "var(--color-surface2)",
-                margin: 12,
-                padding: 10,
-                height: "calc(100% - 24px)",
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
-                overflowY: "auto",
-            }}
-        >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
-                    Manual Edit (after generation)
+        <div style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--color-bg)", padding: '16px', gap: '24px', overflowY: 'auto' }}>
+            <header style={{ padding: '0 8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                    <div style={{ width: 40, height: 40, borderRadius: 12, background: 'var(--gradient-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
+                        <Edit3 size={20} />
+                    </div>
+                    <div>
+                        <h2 style={{ fontSize: 24, fontWeight: 800 }}>Manual Edit</h2>
+                        <p style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>Fine-tune your website visually without diving into code.</p>
+                    </div>
                 </div>
-                <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
-                    {generationStatus === "generating" ? "Generating..." : "Ready"}
+            </header>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '24px' }}>
+                {/* Left Column: Color Palette */}
+                <div className="glass" style={{ padding: '32px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
+                        <Palette size={20} color="var(--color-accent)" />
+                        <h3 style={{ fontSize: 18, fontWeight: 700 }}>Website Colors</h3>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+                        {[
+                            { key: 'primary' as const, label: 'Primary', val: manualPrimaryColor, set: setManualPrimaryColor },
+                            { key: 'secondary' as const, label: 'Secondary', val: manualSecondaryColor, set: setManualSecondaryColor },
+                            { key: 'accent' as const, label: 'Accent', val: manualAccentColor, set: setManualAccentColor },
+                            { key: 'background' as const, label: 'Background', val: manualBackgroundColor, set: setManualBackgroundColor },
+                            { key: 'foreground' as const, label: 'Text', val: manualForegroundColor, set: setManualForegroundColor },
+                            { key: 'muted' as const, label: 'Muted', val: manualMutedColor, set: setManualMutedColor },
+                            { key: 'card' as const, label: 'Card', val: manualCardColor, set: setManualCardColor },
+                            { key: 'border' as const, label: 'Border', val: manualBorderColor, set: setManualBorderColor },
+                        ].map((c) => (
+                            <div key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--color-surface2)', borderRadius: 12, border: '1px solid var(--color-border)' }}>
+                                <div style={{ position: 'relative', width: 32, height: 32 }}>
+                                    <input
+                                        type="color"
+                                        value={c.val}
+                                        onChange={(e) => c.set(e.target.value)}
+                                        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }}
+                                    />
+                                    <div style={{ width: '100%', height: '100%', borderRadius: '50%', background: c.val, border: '2px solid #fff', boxShadow: '0 0 0 1px var(--color-border)' }} />
+                                </div>
+                                <div style={{ flex: 1 }}>
+                                    <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', color: 'var(--color-text-muted)', marginBottom: 2 }}>{c.label}</div>
+                                    <div style={{ fontSize: 13, fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{c.val.toUpperCase()}</div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    <div style={{ marginTop: 32, display: 'flex', gap: 12 }}>
+                        <button onClick={applyPaletteToAllFiles} className="btn-secondary" style={{ flex: 1, padding: '12px 20px', gap: 8 }}>
+                            <Layers size={16} /> Apply Colors to All Files
+                        </button>
+                    </div>
                 </div>
-            </div>
-            <select
-                value={manualTargetFile}
-                onChange={(event) => setManualTargetFile(event.target.value)}
-                style={{
-                    background: "var(--color-surface)",
-                    color: "var(--color-text)",
-                    border: "1px solid var(--color-border)",
-                    borderRadius: 8,
-                    padding: "6px 8px",
-                    fontSize: 12,
-                }}
-            >
-                {filePaths.map((path) => (
-                    <option key={path} value={path}>
-                        {path}
-                    </option>
-                ))}
-            </select>
-            <div style={{ fontSize: 11, color: "var(--color-text-muted)", fontWeight: 600 }}>
-                Website Colors (palette)
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: 8, alignItems: "center" }}>
-                <label style={{ fontSize: 11, color: "var(--color-text-muted)" }}>Primary</label>
-                <input
-                    type="color"
-                    value={manualPrimaryColor}
-                    onChange={(event) => setManualPrimaryColor(event.target.value)}
-                    style={{ width: 50, height: 28, border: "none", background: "transparent", cursor: "pointer" }}
-                />
-                <label style={{ fontSize: 11, color: "var(--color-text-muted)" }}>Secondary</label>
-                <input
-                    type="color"
-                    value={manualSecondaryColor}
-                    onChange={(event) => setManualSecondaryColor(event.target.value)}
-                    style={{ width: 50, height: 28, border: "none", background: "transparent", cursor: "pointer" }}
-                />
-                <label style={{ fontSize: 11, color: "var(--color-text-muted)" }}>Accent</label>
-                <input
-                    type="color"
-                    value={manualAccentColor}
-                    onChange={(event) => setManualAccentColor(event.target.value)}
-                    style={{ width: 50, height: 28, border: "none", background: "transparent", cursor: "pointer" }}
-                />
-                <label style={{ fontSize: 11, color: "var(--color-text-muted)" }}>Background</label>
-                <input
-                    type="color"
-                    value={manualBackgroundColor}
-                    onChange={(event) => setManualBackgroundColor(event.target.value)}
-                    style={{ width: 50, height: 28, border: "none", background: "transparent", cursor: "pointer" }}
-                />
-                <label style={{ fontSize: 11, color: "var(--color-text-muted)" }}>Text / Foreground</label>
-                <input
-                    type="color"
-                    value={manualForegroundColor}
-                    onChange={(event) => setManualForegroundColor(event.target.value)}
-                    style={{ width: 50, height: 28, border: "none", background: "transparent", cursor: "pointer" }}
-                />
-                <label style={{ fontSize: 11, color: "var(--color-text-muted)" }}>Muted</label>
-                <input
-                    type="color"
-                    value={manualMutedColor}
-                    onChange={(event) => setManualMutedColor(event.target.value)}
-                    style={{ width: 50, height: 28, border: "none", background: "transparent", cursor: "pointer" }}
-                />
-                <label style={{ fontSize: 11, color: "var(--color-text-muted)" }}>Card</label>
-                <input
-                    type="color"
-                    value={manualCardColor}
-                    onChange={(event) => setManualCardColor(event.target.value)}
-                    style={{ width: 50, height: 28, border: "none", background: "transparent", cursor: "pointer" }}
-                />
-                <label style={{ fontSize: 11, color: "var(--color-text-muted)" }}>Border</label>
-                <input
-                    type="color"
-                    value={manualBorderColor}
-                    onChange={(event) => setManualBorderColor(event.target.value)}
-                    style={{ width: 50, height: 28, border: "none", background: "transparent", cursor: "pointer" }}
-                />
-                <label style={{ fontSize: 11, color: "var(--color-text-muted)" }}>Title Text</label>
-                <input
-                    value={manualTitle}
-                    onChange={(event) => setManualTitle(event.target.value)}
-                    placeholder="New H1 title"
-                    style={{ fontSize: 12, borderRadius: 8, border: "1px solid var(--color-border)", padding: "6px 8px" }}
-                />
-                <label style={{ fontSize: 11, color: "var(--color-text-muted)" }}>Button Text</label>
-                <input
-                    value={manualButtonText}
-                    onChange={(event) => setManualButtonText(event.target.value)}
-                    placeholder="New button label"
-                    style={{ fontSize: 12, borderRadius: 8, border: "1px solid var(--color-border)", padding: "6px 8px" }}
-                />
-                <label style={{ fontSize: 11, color: "var(--color-text-muted)" }}>Find Text</label>
-                <input
-                    value={manualFindText}
-                    onChange={(event) => setManualFindText(event.target.value)}
-                    placeholder="Text to find"
-                    style={{ fontSize: 12, borderRadius: 8, border: "1px solid var(--color-border)", padding: "6px 8px" }}
-                />
-                <label style={{ fontSize: 11, color: "var(--color-text-muted)" }}>Replace With</label>
-                <input
-                    value={manualReplaceText}
-                    onChange={(event) => setManualReplaceText(event.target.value)}
-                    placeholder="Replacement text"
-                    style={{ fontSize: 12, borderRadius: 8, border: "1px solid var(--color-border)", padding: "6px 8px" }}
-                />
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={applyManualEdit} className="btn btn-ghost" style={{ padding: "6px 10px", fontSize: 12 }}>
-                    <Sparkles size={13} /> Apply To Target File
-                </button>
-                <button onClick={applyPaletteToAllFiles} className="btn btn-ghost" style={{ padding: "6px 10px", fontSize: 12 }}>
-                    <Sparkles size={13} /> Apply Colors To All Files
-                </button>
-                <button onClick={handleSaveManualTarget} disabled={isSaving || !manualTargetFile} className="btn btn-primary" style={{ padding: "6px 10px", fontSize: 12 }}>
-                    <Save size={13} /> Save Component File
-                </button>
-            </div>
-            <div style={{ fontSize: 11, color: generationStatus === "error" ? "var(--color-error)" : "var(--color-text-muted)" }}>
-                {saveMessage || "Tip: use Monaco for full edits, and manual controls for fast color/title/button updates."}
+
+                {/* Right Column: Content & Targets */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+                    <div className="glass" style={{ padding: '32px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
+                            <Layout size={20} color="var(--color-accent)" />
+                            <h3 style={{ fontSize: 18, fontWeight: 700 }}>Target & Content</h3>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                            <div>
+                                <label style={labelStyle}>Target Component File</label>
+                                <CustomSearchSelect
+                                    value={manualTargetFile}
+                                    options={filePaths}
+                                    onChange={setManualTargetFile}
+                                    placeholder="Select component..."
+                                />
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                                <div>
+                                    <label style={labelStyle}>Header (H1) Text</label>
+                                    <div style={{ position: 'relative' }}>
+                                        <Type size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted2)' }} />
+                                        <input value={manualTitle} onChange={(e) => setManualTitle(e.target.value)} placeholder="New site title..." style={{ ...inputStyle, paddingLeft: 36 }} />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label style={labelStyle}>Button Label</label>
+                                    <div style={{ position: 'relative' }}>
+                                        <MousePointer2 size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted2)' }} />
+                                        <input value={manualButtonText} onChange={(e) => setManualButtonText(e.target.value)} placeholder="Click here..." style={{ ...inputStyle, paddingLeft: 36 }} />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                                <div>
+                                    <label style={labelStyle}>Find Text</label>
+                                    <div style={{ position: 'relative' }}>
+                                        <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted2)' }} />
+                                        <input value={manualFindText} onChange={(e) => setManualFindText(e.target.value)} placeholder="Old text..." style={{ ...inputStyle, paddingLeft: 36 }} />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label style={labelStyle}>Replace With</label>
+                                    <div style={{ position: 'relative' }}>
+                                        <Check size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted2)' }} />
+                                        <input value={manualReplaceText} onChange={(e) => setManualReplaceText(e.target.value)} placeholder="New text..." style={{ ...inputStyle, paddingLeft: 36 }} />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <button onClick={applyManualEdit} disabled={isSaving || !manualTargetFile} className="btn-primary" style={{ height: 48, marginTop: 12, gap: 10 }}>
+                                {isSaving ? <RefreshCw size={18} className="animate-spin" /> : <Sparkles size={18} />}
+                                Apply Manual Changes
+                            </button>
+                        </div>
+                    </div>
+
+                    <div style={{ padding: '16px 24px', borderRadius: 16, background: 'var(--color-surface2)', border: '1px solid var(--color-border)', fontSize: 13, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
+                        <span style={{ fontWeight: 700, color: 'var(--color-text)', display: 'block', marginBottom: 4 }}>Pro Tip:</span>
+                        Use the **Code** tab for granular edits. Manual mode is best for quick visual iterations on colors and key copy.
+                        {saveMessage && <div style={{ marginTop: 12, color: 'var(--color-accent)', fontWeight: 600 }}>{saveMessage}</div>}
+                    </div>
+                </div>
             </div>
         </div>
     );
+}
+
+function getEditorLanguage(path: string) {
+    if (path.endsWith(".tsx") || path.endsWith(".ts")) return "typescript";
+    if (path.endsWith(".jsx") || path.endsWith(".js")) return "javascript";
+    if (path.endsWith(".json")) return "json";
+    if (path.endsWith(".css")) return "css";
+    if (path.endsWith(".html")) return "html";
+    return "plaintext";
+}
+
+const labelStyle: React.CSSProperties = {
+    fontSize: 11, fontWeight: 800, color: 'var(--color-text-muted2)',
+    textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6, display: 'block'
+}
+
+const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '10px 16px', borderRadius: 10,
+    background: 'var(--color-surface2)', border: '1px solid var(--color-border)',
+    color: 'var(--color-text)', fontSize: 14, outline: 'none', transition: 'var(--transition)',
+    appearance: 'none'
 }

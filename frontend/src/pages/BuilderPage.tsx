@@ -4,8 +4,8 @@ import { useAgent } from "../hooks/useAgent";
 import ChatPanel from "../components/ChatPanel";
 import WebContainerPreview from "../components/WebContainerPreview";
 import LivePreviewWorkbench from "../components/LivePreviewWorkbench";
-import SettingsPage from "./SettingsPage";
-import { Settings, Plus, MessageSquare, LogOut, LayoutDashboard, Trash2, Download, Sun, Moon, Play, Pencil } from "lucide-react";
+import AppLayout from "../components/AppLayout";
+import { Settings, Plus, MessageSquare, LogOut, LayoutDashboard, Trash2, Download, Sun, Moon, Play, Pencil, Github, Loader2, X, PanelLeft, Search, Square, RotateCcw, Check } from "lucide-react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { useTheme } from "../hooks/useTheme";
@@ -19,6 +19,10 @@ export default function BuilderPage() {
   const navigate = useNavigate();
   const { state, generate, stop, reset, loadProject, reconnect, resumeGeneration } = useAgent();
   const { token, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
+
+  const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<Tab>("preview");
   const [showSettings, setShowSettings] = useState(false);
   const [provider, setProvider] = useState(() => {
@@ -59,7 +63,7 @@ export default function BuilderPage() {
   const [deleteError, setDeleteError] = useState("");
   const [isDeletingProjects, setIsDeletingProjects] = useState(false);
   const [editableFiles, setEditableFiles] = useState<Record<string, string>>({});
-  const { theme, toggleTheme } = useTheme();
+  const [githubDeploying, setGithubDeploying] = useState(false);
   const shouldAutoOpenGeneratedSessionRef = useRef(false);
   const skipProjectHydrationRef = useRef(false);
 
@@ -353,6 +357,31 @@ export default function BuilderPage() {
     }
   };
 
+  const handleGithubDeploy = async () => {
+    setGithubDeploying(true);
+    const targetProjectId = state.sessionId || id;
+    if (!targetProjectId) {
+      alert("No project selected.");
+      setGithubDeploying(false);
+      return;
+    }
+    try {
+      const frontendOrigin = typeof window !== "undefined" ? window.location.origin : "";
+      const backendPublicUrl = (import.meta.env.VITE_BACKEND_PUBLIC_URL as string | undefined)?.trim() || "http://localhost:8080";
+      const githubAuthUrl = `${backendPublicUrl.replace(/\/+$/, "")}/auth/github?frontend=${encodeURIComponent(frontendOrigin)}`;
+
+      const res = await axios.post(
+        "/api/github/prepare",
+        { frontendUrl: frontendOrigin, projectId: targetProjectId },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      window.location.href = res.data.redirect_url || githubAuthUrl;
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || "Failed to start GitHub deployment");
+      setGithubDeploying(false);
+    }
+  };
+
   const handleChangeGeneratedFile = (path: string, content: string) => {
     setEditableFiles((prev) => ({ ...prev, [path]: content }));
   };
@@ -469,1124 +498,441 @@ export default function BuilderPage() {
     initialProviderOptions.find((p) => p.id === provider) || initialProviderOptions[0];
   const deleteTargetProjects = projects.filter((project) => deleteTargetIds.includes(project.id));
 
-  return (
-    <div
-      style={{
-        display: "flex",
-        height: "100vh",
-        fontFamily: "var(--font-sans)",
-        background: "var(--color-bg)",
-        overflow: "hidden",
-      }}
-    >
-      {/* Global Sidebar */}
-      <div
-        style={{
-          width: 260,
-          background: "var(--color-surface)",
-          borderRight: "1px solid var(--color-border)",
-          display: "flex",
-          flexDirection: "column",
-          flexShrink: 0,
-        }}
-      >
-        {/* Sidebar Header */}
-        <div style={{ padding: "16px", borderBottom: "1px solid var(--color-border)" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+  const sidebarContent = (
+    <>
+      <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: 16, width: "100%" }}>
+        <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+          {isSidebarVisible ? (
             <button
               onClick={handleNewProject}
               className="btn btn-primary"
-              style={{ padding: "10px 16px", fontSize: 13 }}
+              style={{ padding: "10px 16px", fontSize: 13, flex: 1, display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}
             >
               <Plus size={16} /> New Project
             </button>
-          </div>
-        </div>
-
-        {/* Projects List */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "12px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, padding: "0 4px" }}>
-            <div
-              style={{
-                fontSize: 11,
-                color: "var(--color-text-muted2)",
-                fontWeight: 700,
-                textTransform: "uppercase",
-                letterSpacing: "0.05em",
-              }}
-            >
-              Your Projects
-            </div>
+          ) : (
             <button
-              onClick={toggleProjectSelectionMode}
-              className="btn btn-ghost"
-              style={{ padding: "4px 8px", fontSize: 11 }}
-            >
-              {isProjectSelectionMode ? "Done" : "Select"}
-            </button>
-          </div>
-
-          <input
-            value={projectSearchTerm}
-            onChange={(e) => setProjectSearchTerm(e.target.value)}
-            placeholder="Search projects..."
-            style={{
-              width: "100%",
-              marginBottom: 8,
-              padding: "8px 10px",
-              borderRadius: "var(--radius-md)",
-              border: "1px solid var(--color-border)",
-              background: "var(--color-surface2)",
-              color: "var(--color-text)",
-              fontSize: 12,
-              outline: "none",
-            }}
-          />
-
-          {isProjectSelectionMode && (
-            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-              <button
-                onClick={() => setSelectedProjectIds(filteredProjects.map((project) => project.id))}
-                className="btn btn-ghost"
-                style={{ padding: "5px 8px", fontSize: 11 }}
-                disabled={filteredProjects.length === 0 || allVisibleProjectsSelected}
-              >
-                Select All
-              </button>
-              <button
-                onClick={() => setSelectedProjectIds([])}
-                className="btn btn-ghost"
-                style={{ padding: "5px 8px", fontSize: 11 }}
-                disabled={selectedProjectIds.length === 0}
-              >
-                Clear
-              </button>
-              <button
-                onClick={() => openDeleteDialog(selectedProjectIds)}
-                className="btn btn-ghost"
-                style={{ padding: "5px 8px", fontSize: 11, color: "var(--color-error)" }}
-                disabled={selectedProjectIds.length === 0}
-              >
-                Delete ({selectedProjectIds.length})
-              </button>
-            </div>
-          )}
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {filteredProjects.length === 0 && (
-              <div style={{ padding: "10px 12px", fontSize: 12, color: "var(--color-text-muted)", textAlign: "center" }}>
-                No projects found.
-              </div>
-            )}
-
-            {filteredProjects.map((p) => {
-              const isActiveProject = state.sessionId === p.id || id === p.id;
-              const isSelectedProject = selectedProjectIds.includes(p.id);
-              const isRenaming = renamingProjectId === p.id;
-
-              return (
-                <div
-                  key={p.id}
-                  onClick={() => handleProjectRowClick(p.id)}
-                  style={{
-                    padding: "10px 12px",
-                    borderRadius: "var(--radius-md)",
-                    background: isSelectedProject || isActiveProject ? "var(--color-surface2)" : "transparent",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    fontSize: 13,
-                    cursor: "pointer",
-                    color: "var(--color-text)",
-                    transition: "all var(--transition)",
-                    border: isSelectedProject ? "1px solid var(--color-primary)" : "1px solid transparent",
-                  }}
-                >
-                  {isProjectSelectionMode && (
-                    <input
-                      type="checkbox"
-                      checked={isSelectedProject}
-                      onChange={() => toggleProjectSelection(p.id)}
-                      onClick={(e) => e.stopPropagation()}
-                      style={{
-                        accentColor: "var(--color-primary)",
-                        width: 14,
-                        height: 14,
-                        cursor: "pointer",
-                      }}
-                    />
-                  )}
-
-                  {isRenaming ? (
-                    <div
-                      style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <input
-                        value={renameDraft}
-                        autoFocus
-                        onChange={(e) => setRenameDraft(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            submitRenameProject(p.id);
-                          }
-                          if (e.key === "Escape") {
-                            e.preventDefault();
-                            cancelRenameProject();
-                          }
-                        }}
-                        style={{
-                          width: "100%",
-                          padding: "6px 8px",
-                          borderRadius: "var(--radius-sm)",
-                          border: "1px solid var(--color-border-hover)",
-                          background: "var(--color-surface)",
-                          color: "var(--color-text)",
-                          fontSize: 12,
-                          outline: "none",
-                        }}
-                      />
-                      {renameError && (
-                        <span style={{ color: "var(--color-error)", fontSize: 11 }}>
-                          {renameError}
-                        </span>
-                      )}
-                    </div>
-                  ) : (
-                    <span
-                      style={{
-                        flex: 1,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        fontWeight: 500,
-                      }}
-                    >
-                      {p.name}
-                    </span>
-                  )}
-
-                  {!isProjectSelectionMode && isRenaming && (
-                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          submitRenameProject(p.id);
-                        }}
-                        className="btn btn-ghost"
-                        style={{ padding: "4px 6px", fontSize: 11 }}
-                        disabled={renameSavingProjectId === p.id}
-                      >
-                        {renameSavingProjectId === p.id ? "Saving..." : "Save"}
-                      </button>
-                      <button
-                        onClick={(e) => cancelRenameProject(e)}
-                        className="btn btn-ghost"
-                        style={{ padding: "4px 6px", fontSize: 11 }}
-                        disabled={renameSavingProjectId === p.id}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
-
-                  {!isProjectSelectionMode && !isRenaming && isActiveProject && (
-                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                      <button
-                        onClick={(e) => handleRunProject(p.id, e)}
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          cursor: "pointer",
-                          padding: 4,
-                          display: "flex",
-                          color: runningProjectId === p.id ? "var(--color-primary)" : "var(--color-text-muted)",
-                          borderRadius: 4,
-                        }}
-                        title="Run Project Runtime"
-                        disabled={runningProjectId === p.id}
-                      >
-                        <Play size={14} />
-                      </button>
-                      <button
-                        onClick={(e) => handleExportProject(p.id, e)}
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          cursor: "pointer",
-                          padding: 4,
-                          display: "flex",
-                          color: "var(--color-text-muted)",
-                          borderRadius: 4,
-                        }}
-                        title="Export Project as ZIP"
-                      >
-                        <Download size={14} />
-                      </button>
-                      <button
-                        onClick={(e) => startRenameProject(p.id, p.name, e)}
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          cursor: "pointer",
-                          padding: 4,
-                          display: "flex",
-                          color: "var(--color-text-muted)",
-                          borderRadius: 4,
-                        }}
-                        title="Rename Project"
-                      >
-                        <Pencil size={14} />
-                      </button>
-                      <button
-                        onClick={(e) => handleDeleteProject(p.id, e)}
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          cursor: "pointer",
-                          padding: 4,
-                          display: "flex",
-                          color: "var(--color-error)",
-                          borderRadius: 4,
-                        }}
-                        title="Delete Project"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Sidebar Footer */}
-        <div
-          style={{
-            padding: "12px 16px",
-            borderTop: "1px solid var(--color-border)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-          }}
-        >
-          <Link
-            to="/dashboard"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              padding: "10px 12px",
-              borderRadius: "var(--radius-md)",
-              textDecoration: "none",
-              color: "var(--color-text)",
-              fontSize: 13,
-              fontWeight: 500,
-              transition: "all var(--transition)",
-            }}
-          >
-            <Settings size={16} /> Settings
-          </Link>
-          <button
-            onClick={logout}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              padding: "10px 12px",
-              borderRadius: "var(--radius-md)",
-              background: "transparent",
-              border: "none",
-              color: "var(--color-error)",
-              fontSize: 13,
-              cursor: "pointer",
-              textAlign: "left",
-              transition: "all var(--transition)",
-            }}
-          >
-            <LogOut size={16} /> Log out
-          </button>
-        </div>
-      </div>
-
-      {/* Main Content Area */}
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          position: "relative",
-          overflow: "hidden",
-        }}
-      >
-        {showInitialWorkspace ? (
-          /* Centered Initial State */
-          <div
-            style={{
-              flex: 1,
-              display: "flex",
-              flexDirection: "column",
-              background: "var(--color-bg)",
-              overflow: "hidden",
-            }}
-          >
-            <div
+              onClick={handleNewProject}
               style={{
-                padding: "12px 16px",
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                borderBottom: "1px solid var(--color-border)",
-                background: "var(--color-surface)",
-              }}
-            >
-              <div style={{ fontWeight: 600, fontSize: 18, color: "var(--color-text-muted)", display: "flex", alignItems: "center" }}>
-                WAGI <span style={{ fontSize: 13, color: "var(--color-text-muted)", opacity: 0.5, marginLeft: 4 }}>platform</span>
-              </div>
-              <div style={{ display: "flex", gap: 6, flex: 1, justifyContent: "flex-end", opacity: 0.6 }}>
-                <button
-                  onClick={() => setShowPreview((v) => !v)}
-                  className="btn btn-ghost"
-                  style={{ padding: "4px 10px", fontSize: 11, borderRadius: 12 }}
-                  title="Toggle Preview"
-                >
-                  Preview
-                </button>
-                <button
-                  onClick={() => setShowLogs((v) => !v)}
-                  className="btn btn-ghost"
-                  style={{ padding: "4px 10px", fontSize: 11, borderRadius: 12 }}
-                  title="Toggle Logs"
-                >
-                  Logs
-                </button>
-                <button
-                  onClick={toggleTheme}
-                  className="btn btn-ghost"
-                  style={{ padding: "4px 8px", fontSize: 11, borderRadius: 12 }}
-                  title="Toggle Theme"
-                >
-                  {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
-                </button>
-                <select
-                  value={provider}
-                  onChange={(e) => {
-                    const selected = initialProviderOptions.find((p) => p.id === e.target.value) || initialProviderOptions[0];
-                    setProvider(selected.id);
-                    setModel(selected.models?.[0] || "");
-                  }}
-                  style={{
-                    padding: "6px 10px",
-                    background: "transparent",
-                    border: "none",
-                    color: "var(--color-text-muted)",
-                    fontSize: 12,
-                    outline: "none",
-                    cursor: "pointer",
-                    maxWidth: 140,
-                  }}
-                >
-                  {initialProviderOptions.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
-                <select
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  style={{
-                    padding: "6px 10px",
-                    background: "transparent",
-                    border: "none",
-                    color: "var(--color-text-muted)",
-                    fontSize: 12,
-                    outline: "none",
-                    cursor: "pointer",
-                    maxWidth: 170,
-                  }}
-                  disabled={!initialSelectedProvider || initialSelectedProvider.models.length === 0}
-                >
-                  {(initialSelectedProvider?.models || []).map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div
-              style={{
-                flex: 1,
+                background: "var(--color-accent)",
+                border: "none",
+                color: "white",
+                cursor: "pointer",
+                width: 36,
+                height: 36,
+                borderRadius: "50%",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                padding: "24px",
-                position: "relative",
-                overflow: "auto",
+                boxShadow: "var(--shadow-md)",
+                transition: "all var(--transition)",
+                flexShrink: 0,
               }}
+              onMouseEnter={(e) => e.currentTarget.style.transform = "scale(1.05)"}
+              onMouseLeave={(e) => e.currentTarget.style.transform = "scale(1)"}
+              title="New Project"
             >
-              <div
-                style={{
-                  width: "100%",
-                  maxWidth: 700,
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 32,
-                  animation: "fadeIn 0.5s ease-out",
-                }}
-              >
-                {/* Header */}
-                <div style={{ textAlign: "center", marginBottom: 8 }}>
-                  <h1
-                    style={{
-                      fontSize: 36,
-                      fontWeight: 700,
-                      color: "var(--color-text)",
-                      marginBottom: 12,
-                      letterSpacing: "-0.02em",
-                      lineHeight: 1.2,
-                    }}
-                  >
-                    What would you like to build?
-                  </h1>
-                  <p
-                    style={{
-                      fontSize: 16,
-                      color: "var(--color-text-muted)",
-                      lineHeight: 1.6,
-                      maxWidth: 480,
-                      margin: "0 auto",
-                    }}
-                  >
-                    Describe your idea in detail and I'll create a fully functional web application for you.
-                  </p>
-                </div>
+              <Plus size={20} />
+            </button>
+          )}
+        </div>
+      </div>
 
-                {/* Input Area */}
-                <div
-                  style={{
-                    background: "var(--color-surface)",
-                    border: "1px solid var(--color-border)",
-                    borderRadius: 24,
-                    padding: "16px 20px",
-                    boxShadow: "var(--shadow-lg)",
-                    transition: "all 0.3s ease",
-                    borderColor: "var(--color-border-hover)",
-                  }}
-                >
-                  <textarea
-                    value={initialPrompt}
-                    onChange={(e) => setInitialPrompt(e.target.value)}
-                    onKeyDown={(e) => {
-                      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                        e.preventDefault();
-                        if (initialPrompt.trim()) {
-                          shouldAutoOpenGeneratedSessionRef.current = true;
-                          generate({
-                            prompt: initialPrompt.trim(),
-                            provider,
-                            model,
-                            apiKey,
-                            projectId: state.sessionId || "",
-                          });
-                          setIsInitialState(false);
-                        }
-                      }
-                    }}
-                    placeholder="e.g., Build a modern SaaS dashboard with analytics charts, user management, and dark mode..."
-                    rows={4}
-                    autoFocus
-                    style={{
-                      width: "100%",
-                      background: "transparent",
-                      border: "none",
-                      color: "var(--color-text)",
-                      fontFamily: "var(--font-sans)",
-                      fontSize: 15,
-                      resize: "none",
-                      outline: "none",
-                      lineHeight: 1.6,
-                      minHeight: 100,
-                    }}
-                  />
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      marginTop: 12,
-                      gap: 12,
-                    }}
-                  >
-                    <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-                      Press Cmd+Enter to generate
-                    </span>
-                    <button
-                      onClick={() => {
-                        if (initialPrompt.trim()) {
-                          shouldAutoOpenGeneratedSessionRef.current = true;
-                          generate({
-                            prompt: initialPrompt.trim(),
-                            provider,
-                            model,
-                            apiKey,
-                            projectId: state.sessionId || "",
-                          });
-                          setIsInitialState(false);
-                        }
-                      }}
-                      disabled={!initialPrompt.trim()}
-                      className="btn btn-primary"
-                      style={{
-                        padding: "10px 24px",
-                        fontSize: 14,
-                        opacity: !initialPrompt.trim() ? 0.5 : 1,
-                        cursor: !initialPrompt.trim() ? "not-allowed" : "pointer",
-                      }}
-                    >
-                      Generate App
-                    </button>
-                  </div>
-                </div>
-
-                {/* Example Prompts */}
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  <div style={{ textAlign: "center" }}>
-                    <span style={{ fontSize: 12, color: "var(--color-text-muted)", fontWeight: 500 }}>
-                      Try an example
-                    </span>
-                  </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
-                    {[
-                      "Build a SaaS dashboard with charts",
-                      "Create an e-commerce store",
-                      "Build a portfolio website",
-                      "Create a blog platform",
-                    ].map((ex, i) => (
-                      <button
-                        key={i}
-                        onClick={() => setInitialPrompt(ex)}
-                        className="btn btn-ghost"
-                        style={{
-                          padding: "10px 18px",
-                          fontSize: 13,
-                          borderRadius: 20,
-                          border: "1px solid var(--color-border)",
-                          background: "var(--color-surface2)",
-                        }}
-                      >
-                        {ex}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : (
-          /* Split Layout for Active Session */
+      <div style={{ flex: 1, overflowY: "auto", overflowX: "clip", padding: isSidebarVisible ? "12px" : "12px 0", width: "100%", display: "flex", flexDirection: "column", alignItems: "center" }}>
+        {isSidebarVisible ? (
           <>
-            <style>{`
-              @media (min-width: 1024px) {
-                .split-layout {
-                  flex-direction: row !important;
-                }
-                .preview-panel {
-                  width: ${isPreviewOpen ? '55%' : '0%'};
-                  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-                }
-                .chat-panel {
-                  width: ${isPreviewOpen ? '45%' : '100%'};
-                  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-                }
-              }
-              @media (max-width: 1023px) {
-                .preview-panel {
-                  width: 100% !important;
-                  height: ${isPreviewOpen ? '45%' : '0%'};
-                  transition: height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-                }
-                .chat-panel {
-                  width: 100% !important;
-                  height: ${isPreviewOpen ? '55%' : '100%'};
-                  transition: height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-                }
-              }
-              @keyframes slideInLeft {
-                from { transform: translateX(-20px); opacity: 0; }
-                to { transform: translateX(0); opacity: 1; }
-              }
-              .preview-content {
-                animation: slideInLeft 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-              }
-              @keyframes slideUp {
-                from { transform: translateY(20px); opacity: 0; }
-                to { transform: translateY(0); opacity: 1; }
-              }
-              @keyframes dotPulse {
-                0%, 100% { opacity: 0.4; transform: scale(0.8); }
-                50% { opacity: 1; transform: scale(1.2); }
-              }
-              .dot-pulse {
-                animation: dotPulse 1.4s ease-in-out infinite;
-              }
-            `}</style>
-
-            <div
-              className="split-layout"
-              style={{
-                display: "flex",
-                flex: 1,
-                minHeight: 0,
-                flexDirection: "column",
-                position: "relative",
-                overflow: "hidden",
-              }}
-            >
-              {/* Live Preview Panel - Right Side */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, padding: "0 4px", width: "100%" }}>
               <div
-                className="preview-panel"
                 style={{
-                  display: isPreviewOpen ? "flex" : "none",
-                  flexDirection: "column",
-                  overflow: "hidden",
-                  background: "var(--color-bg)",
-                  borderRight: "1px solid var(--color-border)",
+                  fontSize: 11,
+                  color: "var(--color-sidebar-muted)",
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
                 }}
               >
-                <div
-                  style={{
-                    padding: "10px 14px",
-                    background: "var(--color-surface)",
-                    borderBottom: "1px solid var(--color-border)",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: 8,
-                    flexShrink: 0,
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <button
-                      onClick={() => setPreviewPaneView("preview")}
-                      className="btn"
-                      style={{
-                        padding: "6px 12px",
-                        fontSize: 12,
-                        fontWeight: 600,
-                        background: previewPaneView === "preview" ? "var(--color-primary)" : "var(--color-surface2)",
-                        color: previewPaneView === "preview" ? "white" : "var(--color-text)",
-                        border: "1px solid var(--color-border)",
-                      }}
-                    >
-                      Live Preview
-                    </button>
-                    <button
-                      onClick={() => setPreviewPaneView("code")}
-                      className="btn"
-                      style={{
-                        padding: "6px 12px",
-                        fontSize: 12,
-                        fontWeight: 600,
-                        background: previewPaneView === "code" ? "var(--color-primary)" : "var(--color-surface2)",
-                        color: previewPaneView === "code" ? "white" : "var(--color-text)",
-                        border: "1px solid var(--color-border)",
-                      }}
-                    >
-                      Code
-                    </button>
-                    <button
-                      onClick={() => setPreviewPaneView("manual")}
-                      className="btn"
-                      style={{
-                        padding: "6px 12px",
-                        fontSize: 12,
-                        fontWeight: 600,
-                        background: previewPaneView === "manual" ? "var(--color-primary)" : "var(--color-surface2)",
-                        color: previewPaneView === "manual" ? "white" : "var(--color-text)",
-                        border: "1px solid var(--color-border)",
-                      }}
-                    >
-                      Manual Edit
-                    </button>
-                    {state.status === "generating" && (
-                      <span
-                        style={{
-                          fontSize: 10,
-                          padding: "2px 8px",
-                          borderRadius: 999,
-                          background: "rgba(99,102,241,0.15)",
-                          color: "var(--color-primary)",
-                          fontWeight: 500,
-                        }}
-                      >
-                        Generating...
-                      </span>
-                    )}
-                  </div>
-                  {state.status !== "generating" && (
-                    <button
-                      onClick={() => {
-                        setIsPreviewOpen(false);
-                        setShowPreview(false);
-                      }}
-                      style={{
-                        background: "transparent",
-                        border: "none",
-                        color: "var(--color-text-muted)",
-                        cursor: "pointer",
-                        padding: 4,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        borderRadius: 4,
-                        transition: "all 0.2s",
-                      }}
-                      title="Close Preview"
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M18 6L6 18M6 6l12 12" />
-                      </svg>
-                    </button>
+                Your Projects
+              </div>
+              <button
+                onClick={toggleProjectSelectionMode}
+                className="btn btn-ghost"
+                style={{ padding: "4px 8px", fontSize: 11 }}
+              >
+                {isProjectSelectionMode ? "Done" : "Select"}
+              </button>
+            </div>
+
+            <input
+              ref={searchInputRef}
+              value={projectSearchTerm}
+              onChange={(e) => setProjectSearchTerm(e.target.value)}
+              placeholder="Search projects..."
+              style={{
+                width: "100%",
+                marginBottom: 8,
+                padding: "8px 10px",
+                borderRadius: "var(--radius-md)",
+                border: "1px solid var(--color-sidebar-input-border)",
+                background: "var(--color-sidebar-input-bg)",
+                color: "var(--color-sidebar-text)",
+                fontSize: 12,
+                outline: "none",
+              }}
+            />
+          </>
+        ) : (
+          <div
+            onClick={() => {
+              setIsSidebarVisible(true);
+              setTimeout(() => searchInputRef.current?.focus(), 100);
+            }}
+            style={{ marginBottom: 12, color: "var(--color-sidebar-muted)", padding: 4, cursor: "pointer" }}
+            title="Search projects (Expand)"
+          >
+            <Search size={18} />
+          </div>
+        )}
+
+        {isProjectSelectionMode && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+            <button
+              onClick={() => setSelectedProjectIds(filteredProjects.map((project) => project.id))}
+              className="btn btn-ghost"
+              style={{ padding: "5px 8px", fontSize: 11 }}
+              disabled={filteredProjects.length === 0 || allVisibleProjectsSelected}
+            >
+              Select All
+            </button>
+            <button
+              onClick={() => setSelectedProjectIds([])}
+              className="btn btn-ghost"
+              style={{ padding: "5px 8px", fontSize: 11 }}
+              disabled={selectedProjectIds.length === 0}
+            >
+              Clear
+            </button>
+            <button
+              onClick={() => openDeleteDialog(selectedProjectIds)}
+              className="btn btn-ghost"
+              style={{ padding: "5px 8px", fontSize: 11, color: "var(--color-error)" }}
+              disabled={selectedProjectIds.length === 0}
+            >
+              Delete ({selectedProjectIds.length})
+            </button>
+          </div>
+        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, width: "100%" }}>
+          {filteredProjects.length === 0 && (
+            <div style={{ padding: "10px 12px", fontSize: 12, color: "var(--color-text-muted)", textAlign: "center" }}>
+              No projects found.
+            </div>
+          )}
+
+          {filteredProjects.map((p) => (
+            <div
+              key={p.id}
+              onClick={() => handleProjectRowClick(p.id)}
+              style={{
+                padding: isSidebarVisible ? "10px 12px" : "10px",
+                borderRadius: isSidebarVisible ? "var(--radius-md)" : "var(--radius-full)",
+                background: selectedProjectIds.includes(p.id) || state.sessionId === p.id || id === p.id ? "var(--color-sidebar-item-active)" : "transparent",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: isSidebarVisible ? "flex-start" : "center",
+                gap: 8,
+                fontSize: 13,
+                cursor: "pointer",
+                color: "var(--color-sidebar-text)",
+                transition: "all var(--transition)",
+                border: selectedProjectIds.includes(p.id) ? "1px solid var(--color-primary)" : "1px solid transparent",
+                width: isSidebarVisible ? "100%" : "auto",
+              }}
+              title={!isSidebarVisible ? p.name : ""}
+            >
+              {isSidebarVisible ? (
+                <>
+                  {isProjectSelectionMode && (
+                    <input
+                      type="checkbox"
+                      checked={selectedProjectIds.includes(p.id)}
+                      onChange={() => toggleProjectSelection(p.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ accentColor: "var(--color-primary)", width: 14, height: 14, cursor: "pointer" }}
+                    />
                   )}
-                </div>
-                <div
-                  className="preview-content"
-                  style={{
-                    flex: 1,
-                    position: "relative",
-                    overflow: "hidden",
-                    display: "flex",
-                    flexDirection: "column",
-                    minHeight: 0,
-                  }}
-                >
-                  {previewPaneView === "preview" ? (
-                    <WebContainerPreview
-                      files={editableFiles}
-                      sessionId={state.sessionId}
-                      generationStatus={state.status}
-                      allowHostPreview={state.status === "generating" || (Boolean(state.sessionId) && runtimeProjectId === state.sessionId)}
+                  {renamingProjectId === p.id ? (
+                    <input
+                      value={renameDraft} autoFocus
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onKeyDown={(e) => { e.key === "Enter" && submitRenameProject(p.id); e.key === "Escape" && cancelRenameProject(); }}
+                      style={{ width: "100%", padding: "6px 8px", borderRadius: "var(--radius-sm)", border: "1px solid var(--color-border-hover)", background: "var(--color-surface)", color: "var(--color-text)", fontSize: 12, outline: "none" }}
                     />
                   ) : (
-                    <LivePreviewWorkbench
-                      files={editableFiles}
-                      output={state.output}
-                      mode={previewPaneView === "code" ? "code" : "manual"}
-                      generationStatus={state.status}
-                      onChangeFile={handleChangeGeneratedFile}
-                      onSaveFile={handleSaveGeneratedFile}
-                    />
+                    <span style={{ flex: "1 1 0%", minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontWeight: 500 }}>{p.name}</span>
                   )}
-                </div>
-              </div>
-
-              {/* Chat Panel - Left Side */}
-              <div className="chat-panel" style={{ display: "flex", flexDirection: "column", overflow: "hidden", position: "relative", flex: 1, minHeight: 0 }}>
-                <ChatPanel
-                  output={state.output}
-                  status={state.status}
-                  compactLogs={true}
-                  onGenerate={(prompt) => {
-                    generate({
-                      prompt,
-                      provider,
-                      model,
-                      apiKey,
-                      projectId: state.sessionId || id || "",
-                      resume: Boolean(state.sessionId || id)
-                    });
-                    setIsInitialState(false);
-                  }}
-                  onResume={() =>
-                    resumeGeneration({
-                      prompt: "",
-                      provider,
-                      model,
-                      apiKey,
-                      projectId: state.sessionId || "",
-                    })
-                  }
-                  onStop={stop}
-                  onReset={() => {
-                    reset();
-                    setInitialPrompt("");
-                    setIsInitialState(true);
-                  }}
-                  provider={provider}
-                  model={model}
-                  apiKey={apiKey}
-                  availableProviders={availableProviders}
-                  onProviderChange={(p, m, k) => {
-                    setProvider(p);
-                    setModel(m);
-                    setApiKey(k);
-                  }}
-                  showPreview={showPreview}
-                  setShowPreview={(v) => {
-                    setShowPreview(v);
-                    setIsPreviewOpen(v);
-                    if (v) {
-                      setPreviewPaneView("preview");
-                    }
-                  }}
-                  showLogs={showLogs}
-                  setShowLogs={setShowLogs}
-                />
-              </div>
-
-              {/* Narration/Logs Panel */}
-              {showLogs && (
-                <div
-                  style={{
-                    position: "absolute",
-                    bottom: 16,
-                    left: 16,
-                    right: 16,
-                    maxHeight: 280,
-                    background: "var(--color-surface)",
-                    border: "1px solid var(--color-border)",
-                    borderRadius: "var(--radius-lg)",
-                    boxShadow: "var(--shadow-lg)",
-                    zIndex: 50,
-                    display: "flex",
-                    flexDirection: "column",
-                    overflow: "hidden",
-                    animation: "slideUp 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
-                  }}
-                >
-                  <div
-                    style={{
-                      padding: "10px 14px",
-                      background: "var(--color-surface2)",
-                      borderBottom: "1px solid var(--color-border)",
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                    }}
-                  >
-                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)" }}>Generation Logs</span>
-                    <button
-                      onClick={() => setShowLogs(false)}
-                      style={{
-                        background: "transparent",
-                        border: "none",
-                        color: "var(--color-text-muted)",
-                        cursor: "pointer",
-                        padding: 4,
-                      }}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                  <div
-                    style={{
-                      flex: 1,
-                      overflowY: "auto",
-                      padding: 14,
-                      fontSize: 12,
-                      fontFamily: "var(--font-mono)",
-                      color: "var(--color-text-muted)",
-                    }}
-                  >
-                    {state.output
-                      .split("\n")
-                      .filter(
-                        (l) =>
-                          l.trim() &&
-                          (l.startsWith("📦") ||
-                            l.startsWith("✨") ||
-                            l.startsWith("📝") ||
-                            l.startsWith("🚀") ||
-                            l.startsWith("�") ||
-                            l.startsWith("🛠️") ||
-                            l.startsWith("✅") ||
-                            l.startsWith("❌") ||
-                            l.includes("Analyzing") ||
-                            l.includes("Generating") ||
-                            l.includes("Writing") ||
-                            l.includes("Installing") ||
-                            l.includes("Starting") ||
-                            l.includes("Successfully"))
-                      )
-                      .map((line, i) => (
-                        <div key={i} style={{ marginBottom: 4, display: "flex", gap: 8 }}>
-                          <span style={{ color: "var(--color-text-muted2)" }}>[{i + 1}]</span>
-                          <span>{line}</span>
-                        </div>
-                      ))}
-                  </div>
+                  {!isProjectSelectionMode && renamingProjectId !== p.id && (state.sessionId === p.id || id === p.id) && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                      <button onClick={(e) => handleRunProject(p.id, e)} style={{ background: "transparent", border: "none", cursor: "pointer", padding: 4, display: "flex", color: runningProjectId === p.id ? "var(--color-primary)" : "var(--color-text-muted)" }}><Play size={14} /></button>
+                      <button onClick={(e) => handleExportProject(p.id, e)} style={{ background: "transparent", border: "none", cursor: "pointer", padding: 4, display: "flex", color: "var(--color-text-muted)" }}><Download size={14} /></button>
+                      <button onClick={(e) => startRenameProject(p.id, p.name, e)} style={{ background: "transparent", border: "none", cursor: "pointer", padding: 4, display: "flex", color: "var(--color-text-muted)" }}><Pencil size={14} /></button>
+                      <button onClick={(e) => handleDeleteProject(p.id, e)} style={{ background: "transparent", border: "none", cursor: "pointer", padding: 4, display: "flex", color: "var(--color-error)" }}><Trash2 size={14} /></button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div style={{ width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 700, fontSize: 14, color: (state.sessionId === p.id || id === p.id) ? "var(--color-accent)" : "var(--color-text-muted)", textTransform: "uppercase" }}>
+                  {p.name.charAt(0)}
                 </div>
               )}
             </div>
-          </>
-        )}
+          ))}
+        </div>
+      </div>
+    </>
+  );
+
+  const navbarRightContent = (
+    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{ display: "flex", gap: 6, opacity: 0.8 }}>
+        <button
+          onClick={() => {
+            const next = !showPreview;
+            setShowPreview(next);
+            setIsPreviewOpen(next);
+            if (next) setPreviewPaneView("preview");
+          }}
+          className="btn btn-ghost"
+          style={{
+            padding: "6px 12px",
+            fontSize: 11,
+            borderRadius: 12,
+            color: showPreview ? "var(--color-primary)" : "var(--color-text-muted)",
+            background: showPreview ? "var(--color-surface2)" : "transparent"
+          }}
+        >
+          Preview
+        </button>
+        <button
+          onClick={() => setShowLogs(!showLogs)}
+          className="btn btn-ghost"
+          style={{
+            padding: "6px 12px",
+            fontSize: 11,
+            borderRadius: 12,
+            color: showLogs ? "var(--color-primary)" : "var(--color-text-muted)",
+            background: showLogs ? "var(--color-surface2)" : "transparent"
+          }}
+        >
+          Logs
+        </button>
       </div>
 
-      {/* Delete Projects Confirmation Modal */}
-      {deleteTargetIds.length > 0 && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 110,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 24,
+      <div style={{ display: "flex", alignItems: "center", gap: 4, background: "var(--color-surface2)", padding: "2px 8px", borderRadius: 12, border: "1px solid var(--color-border)" }}>
+        <select
+          value={provider}
+          onChange={(e) => {
+            const opt = availableProviders.find(p => p.id === e.target.value) || availableProviders[0];
+            setProvider(opt.id);
+            setModel(opt.models?.[0] || "");
           }}
+          style={{ padding: "6px 4px", background: "transparent", border: "none", color: "var(--color-text)", fontSize: 11, fontWeight: 600, outline: "none", cursor: "pointer", maxWidth: 100 }}
         >
-          <div
-            onClick={closeDeleteDialog}
-            style={{
-              position: "absolute",
-              inset: 0,
-              background: "var(--color-bg-overlay)",
-              backdropFilter: "blur(4px)",
-            }}
-          />
-          <div
-            style={{
-              width: "100%",
-              maxWidth: 520,
-              background: "var(--color-surface)",
-              borderRadius: "var(--radius-xl)",
-              border: "1px solid var(--color-border)",
-              boxShadow: "var(--shadow-xl)",
-              position: "relative",
-              padding: 22,
-              display: "flex",
-              flexDirection: "column",
-              gap: 14,
-            }}
-          >
-            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "var(--color-text)" }}>
-              Delete {deleteTargetIds.length > 1 ? "projects" : "project"}?
-            </h3>
-            <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: "var(--color-text-muted)" }}>
-              This action cannot be undone. You are about to permanently remove{" "}
-              <strong>{deleteTargetIds.length}</strong> {deleteTargetIds.length > 1 ? "projects" : "project"}.
-            </p>
+          {availableProviders.map(p => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+        <div style={{ width: 1, height: 12, background: "var(--color-border)" }} />
+        <select
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          style={{ padding: "6px 4px", background: "transparent", border: "none", color: "var(--color-text-muted)", fontSize: 11, outline: "none", cursor: "pointer", maxWidth: 140 }}
+          disabled={!provider || (availableProviders.find(p => p.id === provider)?.models.length || 0) === 0}
+        >
+          {(availableProviders.find(p => p.id === provider)?.models || []).map(m => (
+            <option key={m} value={m}>{m}</option>
+          ))}
+        </select>
+      </div>
 
-            {deleteTargetProjects.length > 0 && (
-              <div
-                style={{
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "var(--radius-md)",
-                  background: "var(--color-surface2)",
-                  maxHeight: 140,
-                  overflowY: "auto",
-                  padding: "8px 10px",
-                }}
-              >
-                {deleteTargetProjects.slice(0, 5).map((project) => (
-                  <div key={project.id} style={{ fontSize: 12, color: "var(--color-text)", padding: "3px 0" }}>
-                    {project.name || "Untitled Project"}
-                  </div>
-                ))}
-                {deleteTargetProjects.length > 5 && (
-                  <div style={{ fontSize: 12, color: "var(--color-text-muted)", paddingTop: 4 }}>
-                    +{deleteTargetProjects.length - 5} more
-                  </div>
-                )}
-              </div>
-            )}
-
-            {deleteError && (
-              <div
-                role="alert"
-                style={{
-                  fontSize: 12,
-                  color: "var(--color-error)",
-                  background: "rgba(239, 68, 68, 0.12)",
-                  border: "1px solid rgba(239, 68, 68, 0.28)",
-                  borderRadius: "var(--radius-md)",
-                  padding: "8px 10px",
-                }}
-              >
-                {deleteError}
-              </div>
-            )}
-
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-              <button
-                onClick={closeDeleteDialog}
-                className="btn btn-ghost"
-                style={{ padding: "8px 14px" }}
-                disabled={isDeletingProjects}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmDeleteProjects}
-                className="btn btn-ghost"
-                style={{ padding: "8px 14px", color: "var(--color-error)" }}
-                disabled={isDeletingProjects}
-              >
-                {isDeletingProjects ? "Deleting..." : `Delete ${deleteTargetIds.length > 1 ? "Projects" : "Project"}`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Settings Modal */}
-      {showSettings && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 100,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 24,
+      {state.status !== 'idle' && (
+        <button
+          onClick={() => {
+            if (state.status === 'generating') {
+              stop();
+            } else {
+              reset();
+              setInitialPrompt("");
+              setIsInitialState(true);
+            }
           }}
+          className="btn btn-icon btn-icon-sm"
+          style={{ borderRadius: 10, background: "var(--color-surface2)" }}
+          title={state.status === 'generating' ? "Stop Generation" : "Reset Session"}
         >
-          <div
-            onClick={() => setShowSettings(false)}
-            style={{
-              position: "absolute",
-              inset: 0,
-              background: "var(--color-bg-overlay)",
-              backdropFilter: "blur(4px)",
-            }}
-          />
-          <div
-            style={{
-              width: "100%",
-              maxWidth: 600,
-              maxHeight: "90vh",
-              background: "var(--color-surface)",
-              borderRadius: "var(--radius-xl)",
-              border: "1px solid var(--color-border)",
-              boxShadow: "var(--shadow-xl)",
-              position: "relative",
-              display: "flex",
-              flexDirection: "column",
-              overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                padding: "20px 24px",
-                borderBottom: "1px solid var(--color-border)",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-              }}
-            >
-              <h2 style={{ fontSize: 18, fontWeight: 700 }}>Settings</h2>
-              <button onClick={() => setShowSettings(false)} className="btn btn-ghost" style={{ padding: 8 }}>
-                ✕
-              </button>
-            </div>
-            <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
-              <SettingsPage />
-            </div>
-          </div>
-        </div>
+          {state.status === 'generating' ? <Square size={14} fill="currentColor" /> : <RotateCcw size={14} />}
+        </button>
       )}
     </div>
+  );
+
+
+  return (
+    <AppLayout
+      isSidebarVisible={isSidebarVisible}
+      setIsSidebarVisible={setIsSidebarVisible}
+      sidebarContent={sidebarContent}
+      navbarRightContent={navbarRightContent}
+    >
+      {showInitialWorkspace ? (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", position: "relative", overflow: "auto" }}>
+          <div style={{ width: "100%", maxWidth: 700, display: "flex", flexDirection: "column", gap: 32, animation: "fadeIn 0.5s ease-out" }}>
+            <div style={{ textAlign: "center", marginBottom: 8 }}>
+              <h1 style={{ fontSize: 36, fontWeight: 700, color: "var(--color-text)", marginBottom: 12, letterSpacing: "-0.02em", lineHeight: 1.2 }}>What would you like to build?</h1>
+              <p style={{ fontSize: 16, color: "var(--color-text-muted)", lineHeight: 1.6, maxWidth: 480, margin: "0 auto" }}>Describe your idea in detail and I'll create a fully functional web application for you.</p>
+            </div>
+            <div style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 24, padding: "16px 20px", boxShadow: "var(--shadow-lg)", transition: "all 0.3s ease", borderColor: "var(--color-border-hover)" }}>
+              <textarea
+                value={initialPrompt} onChange={(e) => setInitialPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                    e.preventDefault();
+                    if (initialPrompt.trim()) {
+                      shouldAutoOpenGeneratedSessionRef.current = true;
+                      generate({ prompt: initialPrompt.trim(), provider, model, apiKey, projectId: state.sessionId || "" });
+                      setIsInitialState(false);
+                    }
+                  }
+                }}
+                placeholder="e.g., Build a modern SaaS dashboard with analytics charts, user management, and dark mode..."
+                rows={4} autoFocus
+                style={{ width: "100%", background: "transparent", border: "none", color: "var(--color-text)", fontFamily: "var(--font-sans)", fontSize: 15, resize: "none", outline: "none", lineHeight: 1.6, minHeight: 100 }}
+              />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 12 }}>
+                <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Press Cmd+Enter to generate</span>
+                <button
+                  onClick={() => {
+                    if (initialPrompt.trim()) {
+                      shouldAutoOpenGeneratedSessionRef.current = true;
+                      generate({ prompt: initialPrompt.trim(), provider, model, apiKey, projectId: state.sessionId || "" });
+                      setIsInitialState(false);
+                    }
+                  }}
+                  disabled={!initialPrompt.trim()} className="btn btn-primary" style={{ padding: "10px 24px", fontSize: 14, opacity: !initialPrompt.trim() ? 0.5 : 1, cursor: !initialPrompt.trim() ? "not-allowed" : "pointer" }}
+                >
+                  Generate App
+                </button>
+              </div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ textAlign: "center" }}><span style={{ fontSize: 12, color: "var(--color-text-muted)", fontWeight: 500 }}>Try an example</span></div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+                {["Build a SaaS dashboard with charts", "Create an e-commerce store", "Build a portfolio website", "Create a blog platform"].map((ex, i) => (
+                  <button key={i} onClick={() => setInitialPrompt(ex)} className="btn btn-ghost" style={{ padding: "10px 18px", fontSize: 13, borderRadius: 20, border: "1px solid var(--color-border)", background: "var(--color-surface2)" }}>{ex}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="split-layout" style={{ display: "flex", flex: 1, minHeight: 0, flexDirection: "column", position: "relative", overflow: "hidden" }}>
+          <style>{`
+            @media (min-width: 1024px) {
+              .split-layout { flex-direction: row !important; height: 100%; min-height: 0; }
+              .preview-panel { width: ${isPreviewOpen ? '55%' : '0%'}; height: 100%; transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1); flex-shrink: 0; overflow: hidden; }
+              .chat-panel { width: ${isPreviewOpen ? '45%' : '100%'}; height: 100%; transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1); flex: 1; min-width: 0; }
+            }
+            @media (max-width: 1023px) {
+              .preview-panel { width: 100% !important; height: ${isPreviewOpen ? '45%' : '0%'}; transition: height 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
+              .chat-panel { width: 100% !important; height: ${isPreviewOpen ? '55%' : '100%'}; transition: height 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
+            }
+            @keyframes slideInLeft { from { transform: translateX(-20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+            .preview-content { animation: slideInLeft 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+          `}</style>
+          <div className="preview-panel" style={{ display: isPreviewOpen ? "flex" : "none", flexDirection: "column", overflow: "hidden", background: "var(--color-bg)", borderRight: "1px solid var(--color-border)" }}>
+            <div style={{ padding: "8px 16px", borderBottom: "1px solid var(--color-border)", display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--color-surface)", zIndex: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, background: "var(--color-surface2)", padding: "4px", borderRadius: "var(--radius-lg)", border: "1px solid var(--color-border)" }}>
+                {[{ id: "preview", label: "Live Preview" }, { id: "code", label: "Code" }, { id: "manual", label: "Manual Edit" }].map((tab) => (
+                  <button key={tab.id} onClick={() => setPreviewPaneView(tab.id as any)} style={{ padding: "6px 16px", fontSize: 12, fontWeight: 600, borderRadius: "var(--radius-md)", border: "none", background: previewPaneView === tab.id ? "var(--color-surface)" : "transparent", color: previewPaneView === tab.id ? "var(--color-text)" : "var(--color-text-muted)", boxShadow: previewPaneView === tab.id ? "var(--shadow-sm)" : "none", cursor: "pointer", transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)" }}>{tab.label}</button>
+                ))}
+                <div style={{ width: 1, height: 16, background: "var(--color-border)", margin: "0 4px" }} />
+                <button onClick={handleGithubDeploy} disabled={githubDeploying} className="btn btn-ghost" style={{ padding: "6px 16px", fontSize: 12, display: "flex", alignItems: "center", gap: 8 }}>
+                  {githubDeploying ? <Loader2 size={14} className="animate-spin" /> : <Github size={14} />} Deploy to GitHub
+                </button>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                {state.status === "generating" && <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span className="animate-pulse" style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--color-accent)' }} /><span style={{ fontSize: 11, color: "var(--color-text-muted)", fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Generating...</span></div>}
+                {state.status !== "generating" && <button onClick={() => { setIsPreviewOpen(false); setShowPreview(false); }} style={{ background: "var(--color-surface2)", border: "1px solid var(--color-border)", color: "var(--color-text-muted)", cursor: "pointer", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 8, transition: "all 0.2s" }} title="Close Preview"><X size={14} /></button>}
+              </div>
+            </div>
+            <div className="preview-content" style={{ flex: 1, position: "relative", overflow: "hidden", display: "flex", flexDirection: "column", minHeight: 0 }}>
+              {previewPaneView === "preview" ? (
+                <WebContainerPreview files={editableFiles} sessionId={state.sessionId} generationStatus={state.status} allowHostPreview={state.status === "generating" || (Boolean(state.sessionId) && runtimeProjectId === state.sessionId)} />
+              ) : (
+                <LivePreviewWorkbench files={editableFiles} output={state.output} mode={previewPaneView === "code" ? "code" : "manual"} generationStatus={state.status} onChangeFile={handleChangeGeneratedFile} onSaveFile={handleSaveGeneratedFile} />
+              )}
+            </div>
+          </div>
+          <div className="chat-panel" style={{ display: "flex", flexDirection: "column", background: "var(--color-bg)", minWidth: 0, flex: 1, height: "100%" }}>
+            <ChatPanel
+              output={state.output} status={state.status} compactLogs={true}
+              onGenerate={(prompt) => {
+                const projectId = state.sessionId;
+                if (!projectId) {
+                  generate({ prompt: prompt.trim(), provider, model, apiKey });
+                } else {
+                  generate({ prompt: prompt.trim(), provider, model, apiKey, projectId: projectId });
+                }
+                setIsInitialState(false);
+              }}
+              onResume={() => resumeGeneration({ prompt: "", provider, model, apiKey, projectId: state.sessionId || id || "" })}
+              onStop={stop} onReset={() => {
+                reset();
+                setInitialPrompt("");
+                setIsInitialState(true);
+              }}
+              provider={provider} model={model} apiKey={apiKey} availableProviders={availableProviders}
+              onProviderChange={(p, m, k) => { setProvider(p); setModel(m); setApiKey(k); }}
+              showPreview={showPreview} setShowPreview={(v) => { setShowPreview(v); setIsPreviewOpen(v); if (v) setPreviewPaneView("preview"); }}
+              showLogs={showLogs} setShowLogs={setShowLogs}
+            />
+          </div>
+          {showLogs && (
+            <div style={{ position: "absolute", bottom: 16, left: 16, right: 16, maxHeight: 280, background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)", zIndex: 50, display: "flex", flexDirection: "column", overflow: "hidden", animation: "slideUp 0.25s cubic-bezier(0.4, 0, 0.2, 1)" }}>
+              <div style={{ padding: "10px 14px", background: "var(--color-surface2)", borderBottom: "1px solid var(--color-border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)" }}>Generation Logs</span>
+                <button onClick={() => setShowLogs(false)} style={{ background: "transparent", border: "none", color: "var(--color-text-muted)", cursor: "pointer", padding: 4 }}>✕</button>
+              </div>
+              <div style={{ flex: 1, overflowY: "auto", padding: 14, fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--color-text-muted)" }}>
+                {state.output.split("\n").filter(l => l.trim() && (l.startsWith("📦") || l.startsWith("✨") || l.startsWith("📝") || l.startsWith("🚀") || l.startsWith("") || l.startsWith("🛠️") || l.startsWith("✅") || l.startsWith("❌") || l.includes("Analyzing") || l.includes("Generating") || l.includes("Writing") || l.includes("Installing") || l.includes("Starting") || l.includes("Successfully"))).map((line, i) => (
+                  <div key={i} style={{ marginBottom: 4, display: "flex", gap: 8 }}><span style={{ color: "var(--color-text-muted2)" }}>[{i + 1}]</span><span>{line}</span></div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {deleteTargetIds.length > 0 && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div onClick={closeDeleteDialog} style={{ position: "absolute", inset: 0, background: "var(--color-bg-overlay)", backdropFilter: "blur(4px)" }} />
+          <div style={{ width: "100%", maxWidth: 520, background: "var(--color-surface)", borderRadius: "var(--radius-xl)", border: "1px solid var(--color-border)", boxShadow: "var(--shadow-xl)", position: "relative", padding: 22, display: "flex", flexDirection: "column", gap: 14 }}>
+            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "var(--color-text)" }}>Delete {deleteTargetIds.length > 1 ? "projects" : "project"}?</h3>
+            <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: "var(--color-text-muted)" }}>This action cannot be undone. You are about to permanently remove <strong>{deleteTargetIds.length}</strong> {deleteTargetIds.length > 1 ? "projects" : "project"}.</p>
+            {deleteTargetProjects.length > 0 && (
+              <div style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", background: "var(--color-surface2)", maxHeight: 140, overflowY: "auto", padding: "8px 10px" }}>
+                {deleteTargetProjects.slice(0, 5).map(project => (<div key={project.id} style={{ fontSize: 12, color: "var(--color-text)", padding: "3px 0" }}>{project.name || "Untitled Project"}</div>))}
+                {deleteTargetProjects.length > 5 && (<div style={{ fontSize: 12, color: "var(--color-text-muted)", paddingTop: 4 }}>+{deleteTargetProjects.length - 5} more</div>)}
+              </div>
+            )}
+            {deleteError && (<div role="alert" style={{ fontSize: 12, color: "var(--color-error)", background: "rgba(239, 68, 68, 0.12)", border: "1px solid rgba(239, 68, 68, 0.28)", borderRadius: "var(--radius-md)", padding: "8px 10px" }}>{deleteError}</div>)}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button onClick={closeDeleteDialog} className="btn btn-ghost" style={{ padding: "8px 14px" }} disabled={isDeletingProjects}>Cancel</button>
+              <button onClick={confirmDeleteProjects} className="btn btn-ghost" style={{ padding: "8px 14px", color: "var(--color-error)" }} disabled={isDeletingProjects}>{isDeletingProjects ? "Deleting..." : `Delete ${deleteTargetIds.length > 1 ? "Projects" : "Project"}`}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </AppLayout>
   );
 }
