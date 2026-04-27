@@ -25,6 +25,13 @@ class Settings:
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
     BACKEND_PUBLIC_URL: str = os.getenv("BACKEND_PUBLIC_URL", "http://localhost:8080")
 
+    # Stripe
+    STRIPE_SECRET_KEY: str = os.getenv("STRIPE_SECRET_KEY", "")
+    STRIPE_WEBHOOK_SECRET: str = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+    STRIPE_PRICE_FREE: str = os.getenv("STRIPE_PRICE_FREE", "")
+    STRIPE_PRICE_PLUS: str = os.getenv("STRIPE_PRICE_PLUS", "")
+    STRIPE_PRICE_PRO: str = os.getenv("STRIPE_PRICE_PRO", "")
+
     # Session
     SESSION_SECRET: str = os.getenv(
         "SESSION_SECRET",

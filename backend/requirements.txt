@@ -14,3 +14,4 @@ cryptography>=42.0.0
 itsdangerous>=2.2.0
 # Tooling
 deepagents>=0.1.0
+stripe>=12.2.0

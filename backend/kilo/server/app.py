@@ -9,6 +9,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .config import settings
 from .routes import auth as auth_router
 from .routes import admin as admin_router
+from .routes import billing as billing_router
 from .routes import files
 from .routes import generate
 from .routes import chat as chat_router
@@ -48,6 +49,7 @@ app.include_router(github_router.router)
 app.include_router(auth_router.router)
 app.include_router(users_router.router)
 app.include_router(admin_router.router)
+app.include_router(billing_router.router)
 
 
 @app.on_event("startup")

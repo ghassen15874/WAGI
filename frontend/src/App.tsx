@@ -43,12 +43,55 @@ export function ProtectedRoute({
   return children;
 }
 
+export function PublicRoute({
+  children,
+}: {
+  children: JSX.Element;
+}) {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          height: "100vh",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        Loading...
+      </div>
+    );
+  }
+
+  if (user) {
+    return <Navigate to={user.role === "ADMIN" ? "/admin" : "/app"} replace />;
+  }
+
+  return children;
+}
+
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/register" element={<RegisterPage />} />
+      <Route
+        path="/login"
+        element={(
+          <PublicRoute>
+            <LoginPage />
+          </PublicRoute>
+        )}
+      />
+      <Route
+        path="/register"
+        element={(
+          <PublicRoute>
+            <RegisterPage />
+          </PublicRoute>
+        )}
+      />
 
       <Route
         path="/app"

@@ -9,6 +9,8 @@ export interface User {
     isActive: boolean
     githubConnected?: boolean
     githubUsername?: string
+    planId?: string
+    planName?: string
 }
 
 interface AuthContextType {

@@ -6,6 +6,7 @@ import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import SimpleConnectionPool
+from .config import settings
 
 # We fall back to the lovable user on localhost if not specified in .env
 DB_URL = os.getenv("DATABASE_URL", "postgresql://lovable:lovable123@localhost:5432/lovable")
@@ -137,6 +138,64 @@ CREATE TABLE IF NOT EXISTS model_registry (
     updated_at  TIMESTAMP NOT NULL DEFAULT NOW(),
     FOREIGN KEY (provider_id) REFERENCES provider_registry(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS subscription_plans (
+    id                              VARCHAR(50) PRIMARY KEY,
+    name                            VARCHAR(100) NOT NULL,
+    description                     TEXT NOT NULL DEFAULT '',
+    provider_id                     VARCHAR(100) NOT NULL,
+    model_id                        VARCHAR(255) NOT NULL,
+    monthly_price_cents             INT NOT NULL DEFAULT 0,
+    monthly_request_limit           INT NOT NULL DEFAULT 20,
+    input_token_price_per_million   NUMERIC(12,4) NOT NULL DEFAULT 0,
+    output_token_price_per_million  NUMERIC(12,4) NOT NULL DEFAULT 0,
+    stripe_price_id                 VARCHAR(255) NOT NULL DEFAULT '',
+    encrypted_api_key               TEXT NOT NULL DEFAULT '',
+    limit_strategy                  VARCHAR(50) NOT NULL DEFAULT 'monthly', -- 'daily', 'monthly', 'total'
+    daily_token_limit               BIGINT NOT NULL DEFAULT 200000,
+    total_token_limit               BIGINT NOT NULL DEFAULT 0,
+    active                          BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order                      INT NOT NULL DEFAULT 0,
+    created_at                      TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at                      TIMESTAMP NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (provider_id) REFERENCES provider_registry(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS user_subscriptions (
+    user_id                     VARCHAR(255) PRIMARY KEY,
+    plan_id                     VARCHAR(50) NOT NULL,
+    status                      VARCHAR(50) NOT NULL DEFAULT 'active',
+    stripe_customer_id          VARCHAR(255) NOT NULL DEFAULT '',
+    stripe_subscription_id      VARCHAR(255) NOT NULL DEFAULT '',
+    stripe_checkout_session_id  VARCHAR(255) NOT NULL DEFAULT '',
+    current_period_start        TIMESTAMP,
+    current_period_end          TIMESTAMP,
+    cancel_at_period_end        BOOLEAN NOT NULL DEFAULT FALSE,
+    total_tokens_used           BIGINT NOT NULL DEFAULT 0,
+    custom_token_limit          BIGINT NOT NULL DEFAULT 0,
+    created_at                  TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at                  TIMESTAMP NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (plan_id) REFERENCES subscription_plans(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS usage_counters (
+    id            VARCHAR(255) PRIMARY KEY,
+    user_id       VARCHAR(255) NOT NULL,
+    period_key    VARCHAR(20) NOT NULL,
+    requests_used INT NOT NULL DEFAULT 0,
+    input_tokens  BIGINT NOT NULL DEFAULT 0,
+    output_tokens BIGINT NOT NULL DEFAULT 0,
+    created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMP NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE (user_id, period_key)
+);
+
+CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+    id           VARCHAR(255) PRIMARY KEY,
+    processed_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
 """
 
 _ALTER_SQL = """
@@ -173,6 +232,37 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS github_deploy_error TEXT NOT NULL 
 ALTER TABLE provider_registry ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 0;
 ALTER TABLE model_registry ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 0;
 ALTER TABLE model_registry ADD COLUMN IF NOT EXISTS model_id VARCHAR(255);
+
+ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS monthly_price_cents INT NOT NULL DEFAULT 0;
+ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS monthly_request_limit INT NOT NULL DEFAULT 20;
+ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS input_token_price_per_million NUMERIC(12,4) NOT NULL DEFAULT 0;
+ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS output_token_price_per_million NUMERIC(12,4) NOT NULL DEFAULT 0;
+ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS stripe_price_id VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS encrypted_api_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 0;
+
+ALTER TABLE user_subscriptions ADD COLUMN IF NOT EXISTS status VARCHAR(50) NOT NULL DEFAULT 'active';
+ALTER TABLE user_subscriptions ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE user_subscriptions ADD COLUMN IF NOT EXISTS stripe_subscription_id VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE user_subscriptions ADD COLUMN IF NOT EXISTS stripe_checkout_session_id VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE user_subscriptions ADD COLUMN IF NOT EXISTS current_period_start TIMESTAMP;
+ALTER TABLE user_subscriptions ADD COLUMN IF NOT EXISTS current_period_end TIMESTAMP;
+ALTER TABLE user_subscriptions ADD COLUMN IF NOT EXISTS cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE user_subscriptions ADD COLUMN IF NOT EXISTS total_tokens_used BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE user_subscriptions ADD COLUMN IF NOT EXISTS custom_token_limit BIGINT NOT NULL DEFAULT 0;
+
+ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS limit_strategy VARCHAR(50) NOT NULL DEFAULT 'monthly';
+ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS daily_token_limit BIGINT NOT NULL DEFAULT 200000;
+ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS total_token_limit BIGINT NOT NULL DEFAULT 0;
+
+ALTER TABLE usage_counters ADD COLUMN IF NOT EXISTS requests_used INT NOT NULL DEFAULT 0;
+ALTER TABLE usage_counters ADD COLUMN IF NOT EXISTS input_tokens BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE usage_counters ADD COLUMN IF NOT EXISTS output_tokens BIGINT NOT NULL DEFAULT 0;
+
+CREATE UNIQUE INDEX IF NOT EXISTS usage_counters_user_period_idx ON usage_counters (user_id, period_key);
+CREATE INDEX IF NOT EXISTS subscription_plans_provider_model_idx ON subscription_plans (provider_id, model_id);
 CREATE UNIQUE INDEX IF NOT EXISTS users_github_id_idx ON users (github_id) WHERE github_id IS NOT NULL;
 """
 
@@ -203,6 +293,9 @@ _DEFAULT_MODELS = [
     {"model_id": "meta-llama/llama-3.3-70b-instruct", "provider_id": "openrouter"},
     {"model_id": "deepseek-chat", "provider_id": "deepseek"},
     {"model_id": "deepseek-reasoner", "provider_id": "deepseek"},
+    {"model_id": "deepseek-reason-v3", "provider_id": "deepseek"},
+    {"model_id": "deepseek-v4-pro", "provider_id": "deepseek"},
+    {"model_id": "claude-sonnet-4.6", "provider_id": "anthropic"},
     {"model_id": "chatgpt", "provider_id": "scraper"},
     {"model_id": "deepseek", "provider_id": "scraper"},
     {"model_id": "deepseek-chat", "provider_id": "scraper"},
@@ -211,6 +304,54 @@ _DEFAULT_MODELS = [
     {"model_id": "gpt-4o-mini", "provider_id": "scraper"},
     {"model_id": "gemini-2.0-flash", "provider_id": "scraper"},
     {"model_id": "groq", "provider_id": "scraper"},
+]
+
+_DEFAULT_SUBSCRIPTION_PLANS = [
+    {
+        "id": "free",
+        "name": "Free",
+        "description": "Starter plan",
+        "provider_id": "deepseek",
+        "model_id": "deepseek-reason-v3",
+        "monthly_price_cents": 0,
+        "monthly_request_limit": 2000,
+        "input_token_price_per_million": 0,
+        "output_token_price_per_million": 0,
+        "stripe_price_id": settings.STRIPE_PRICE_FREE,
+        "limit_strategy": "daily",
+        "daily_token_limit": 100000,
+        "sort_order": 0,
+    },
+    {
+        "id": "plus",
+        "name": "Plus",
+        "description": "DeepSeek V4 Pro plan",
+        "provider_id": "deepseek",
+        "model_id": "deepseek-v4-pro",
+        "monthly_price_cents": 2900,
+        "monthly_request_limit": 2000,
+        "input_token_price_per_million": 0,
+        "output_token_price_per_million": 0,
+        "stripe_price_id": settings.STRIPE_PRICE_PLUS,
+        "limit_strategy": "total",
+        "total_token_limit": 1000000,
+        "sort_order": 1,
+    },
+    {
+        "id": "pro",
+        "name": "Pro",
+        "description": "Claude Sonnet premium plan",
+        "provider_id": "anthropic",
+        "model_id": "claude-sonnet-4.6",
+        "monthly_price_cents": 7900,
+        "monthly_request_limit": 10000,
+        "input_token_price_per_million": 0,
+        "output_token_price_per_million": 0,
+        "stripe_price_id": settings.STRIPE_PRICE_PRO,
+        "limit_strategy": "total",
+        "total_token_limit": 5000000,
+        "sort_order": 2,
+    },
 ]
 
 
@@ -288,6 +429,76 @@ def _seed_registry(cur):
             """,
             (registry_id, model["model_id"], model["provider_id"], index),
         )
+
+
+def _seed_subscription_plans(cur):
+    for plan in _DEFAULT_SUBSCRIPTION_PLANS:
+        cur.execute(
+            """
+            INSERT INTO subscription_plans (
+                id,
+                name,
+                description,
+                provider_id,
+                model_id,
+                monthly_price_cents,
+                monthly_request_limit,
+                limit_strategy,
+                daily_token_limit,
+                total_token_limit,
+                input_token_price_per_million,
+                output_token_price_per_million,
+                stripe_price_id,
+                active,
+                sort_order,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                description = EXCLUDED.description,
+                provider_id = EXCLUDED.provider_id,
+                model_id = EXCLUDED.model_id,
+                monthly_price_cents = EXCLUDED.monthly_price_cents,
+                monthly_request_limit = EXCLUDED.monthly_request_limit,
+                limit_strategy = EXCLUDED.limit_strategy,
+                daily_token_limit = EXCLUDED.daily_token_limit,
+                total_token_limit = EXCLUDED.total_token_limit,
+                input_token_price_per_million = EXCLUDED.input_token_price_per_million,
+                output_token_price_per_million = EXCLUDED.output_token_price_per_million,
+                stripe_price_id = EXCLUDED.stripe_price_id,
+                sort_order = EXCLUDED.sort_order,
+                updated_at = NOW()
+            """,
+            (
+                plan["id"],
+                plan["name"],
+                plan["description"],
+                plan["provider_id"],
+                plan["model_id"],
+                plan["monthly_price_cents"],
+                plan["monthly_request_limit"],
+                plan.get("limit_strategy", "monthly"),
+                plan.get("daily_token_limit", 0),
+                plan.get("total_token_limit", 0),
+                plan["input_token_price_per_million"],
+                plan["output_token_price_per_million"],
+                plan.get("stripe_price_id", ""),
+                plan["sort_order"],
+            ),
+        )
+
+
+def _seed_default_user_subscriptions(cur):
+    cur.execute(
+        """
+        INSERT INTO user_subscriptions (user_id, plan_id, status)
+        SELECT users.id, 'free', 'active'
+        FROM users
+        LEFT JOIN user_subscriptions ON user_subscriptions.user_id = users.id
+        WHERE user_subscriptions.user_id IS NULL
+        """
+    )
 
 class CursorWrapper:
     def __init__(self, cursor):
@@ -367,6 +578,8 @@ def init_db():
                 cur.execute(_ALTER_SQL)
                 _migrate_model_registry(cur)
                 _seed_registry(cur)
+                _seed_subscription_plans(cur)
+                _seed_default_user_subscriptions(cur)
             conn.commit()
         except Exception as e:
             print(f"⚠️ Failed to init schema: {e}")

@@ -13,6 +13,16 @@ import { useTheme } from "../hooks/useTheme";
 type Tab = "preview" | "files";
 type PreviewPaneView = "preview" | "code" | "manual";
 const BUILDER_PREFS_KEY = "builder_page_preferences";
+const BUILDER_PLAN_PREFS_KEY = "builder_page_plan";
+
+type BillingPlanOption = {
+  id: string;
+  name: string;
+  provider: string;
+  model: string;
+  canUse: boolean;
+  isCurrent: boolean;
+};
 
 export default function BuilderPage() {
   const { id } = useParams<{ id: string }>();
@@ -42,6 +52,14 @@ export default function BuilderPage() {
     }
   });
   const [apiKey, setApiKey] = useState("");
+  const [planOptions, setPlanOptions] = useState<BillingPlanOption[]>([]);
+  const [selectedPlanId, setSelectedPlanId] = useState(() => {
+    try {
+      return localStorage.getItem(BUILDER_PLAN_PREFS_KEY) || "";
+    } catch {
+      return "";
+    }
+  });
   const [projects, setProjects] = useState<any[]>([]);
   const [showPreview, setShowPreview] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
@@ -122,41 +140,115 @@ export default function BuilderPage() {
   }, [projects, renamingProjectId]);
 
   useEffect(() => {
-    const fetchProviders = () => {
-      axios
-        .get("/api/providers")
-        .then((res) => {
-          const providers = Array.isArray(res.data.providers)
-            ? res.data.providers.filter((item: any) => item.id !== "auto")
-            : [];
-          setAvailableProviders(providers);
+    const fetchBuilderContext = async () => {
+      try {
+        const providersReq = axios.get("/api/providers");
+        const billingReq = token
+          ? axios.get("/api/billing/me", { headers: { Authorization: `Bearer ${token}` } })
+          : Promise.resolve(null);
 
-          if (!providers.length) {
-            return;
-          }
+        const [providersRes, billingRes]: any[] = await Promise.all([providersReq, billingReq]);
+        const providers = Array.isArray(providersRes?.data?.providers)
+          ? providersRes.data.providers.filter((item: any) => item.id !== "auto")
+          : [];
+        setAvailableProviders(providers);
 
-          const selectedProvider = providers.find((item: any) => item.id === provider);
-          if (!selectedProvider) {
-            setProvider(providers[0].id);
-            setModel(providers[0].models?.[0] || "");
-            return;
-          }
+        const rawPlans = Array.isArray(billingRes?.data?.plans) ? billingRes.data.plans : [];
+        const plans: BillingPlanOption[] = rawPlans.map((plan: any) => ({
+          id: plan.id,
+          name: plan.name,
+          provider: plan.provider,
+          model: plan.model,
+          canUse: Boolean(plan.canUse),
+          isCurrent: Boolean(plan.isCurrent),
+        }));
+        setPlanOptions(plans);
 
-          if (!selectedProvider.models?.includes(model)) {
-            setModel(selectedProvider.models?.[0] || "");
-          }
-        })
-        .catch(console.error);
+        if (plans.length) {
+          const currentPlanId = String(billingRes?.data?.currentPlan?.id || "");
+          setSelectedPlanId((prev) => {
+            if (prev && plans.some((plan) => plan.id === prev && plan.canUse)) {
+              return prev;
+            }
+            if (currentPlanId && plans.some((plan) => plan.id === currentPlanId)) {
+              return currentPlanId;
+            }
+            const firstAllowed = plans.find((plan) => plan.canUse) || plans[0];
+            return firstAllowed?.id || prev;
+          });
+        }
+      } catch (error) {
+        console.error(error);
+      }
     };
 
-    fetchProviders();
-    window.addEventListener("focus", fetchProviders);
-    return () => window.removeEventListener("focus", fetchProviders);
-  }, [provider, model]);
+    fetchBuilderContext();
+    window.addEventListener("focus", fetchBuilderContext);
+    return () => window.removeEventListener("focus", fetchBuilderContext);
+  }, [token]);
+
+  useEffect(() => {
+    if (selectedPlanId !== "byok") {
+      return;
+    }
+    if (!availableProviders.length) {
+      return;
+    }
+    const selectedProvider = availableProviders.find((item) => item.id === provider);
+    if (!selectedProvider) {
+      const fallbackProvider = availableProviders[0];
+      setProvider(fallbackProvider.id);
+      if (!model.trim()) {
+        setModel(fallbackProvider.models?.[0] || "");
+      }
+      return;
+    }
+    if (!model.trim()) {
+      setModel(selectedProvider.models?.[0] || "");
+    }
+  }, [selectedPlanId, availableProviders, provider, model]);
+
+  useEffect(() => {
+    if (!planOptions.length || selectedPlanId === "byok") {
+      return;
+    }
+
+    const selectedPlan =
+      planOptions.find((plan) => plan.id === selectedPlanId && plan.canUse)
+      || planOptions.find((plan) => plan.isCurrent)
+      || planOptions.find((plan) => plan.canUse);
+
+    if (selectedPlan) {
+      setProvider(selectedPlan.provider);
+      setModel(selectedPlan.model);
+      return;
+    }
+
+    if (!availableProviders.length) {
+      return;
+    }
+
+    const selectedProvider = availableProviders.find((item) => item.id === provider);
+    if (!selectedProvider) {
+      setProvider(availableProviders[0].id);
+      setModel(availableProviders[0].models?.[0] || "");
+      return;
+    }
+    if (!selectedProvider.models?.includes(model)) {
+      setModel(selectedProvider.models?.[0] || "");
+    }
+  }, [selectedPlanId, planOptions, availableProviders, provider, model]);
 
   useEffect(() => {
     localStorage.setItem(BUILDER_PREFS_KEY, JSON.stringify({ provider, model }));
   }, [provider, model]);
+
+  useEffect(() => {
+    if (!selectedPlanId) {
+      return;
+    }
+    localStorage.setItem(BUILDER_PLAN_PREFS_KEY, selectedPlanId);
+  }, [selectedPlanId]);
 
   const openDeleteDialog = (projectIds: string[]) => {
     const dedupedIds = Array.from(new Set(projectIds.filter(Boolean)));
@@ -490,13 +582,11 @@ export default function BuilderPage() {
   };
 
   const showInitialWorkspace = !id && isInitialState;
-  const initialProviderOptions =
-    availableProviders.length
-      ? availableProviders
-      : [{ id: provider, name: provider, models: model ? [model] : [] }];
-  const initialSelectedProvider =
-    initialProviderOptions.find((p) => p.id === provider) || initialProviderOptions[0];
   const deleteTargetProjects = projects.filter((project) => deleteTargetIds.includes(project.id));
+  const selectedPlan =
+    planOptions.find((plan) => plan.id === selectedPlanId)
+    || planOptions.find((plan) => plan.isCurrent)
+    || planOptions[0];
 
   const sidebarContent = (
     <>
@@ -728,32 +818,93 @@ export default function BuilderPage() {
         </button>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 4, background: "var(--color-surface2)", padding: "2px 8px", borderRadius: 12, border: "1px solid var(--color-border)" }}>
-        <select
-          value={provider}
-          onChange={(e) => {
-            const opt = availableProviders.find(p => p.id === e.target.value) || availableProviders[0];
-            setProvider(opt.id);
-            setModel(opt.models?.[0] || "");
-          }}
-          style={{ padding: "6px 4px", background: "transparent", border: "none", color: "var(--color-text)", fontSize: 11, fontWeight: 600, outline: "none", cursor: "pointer", maxWidth: 100 }}
-        >
-          {availableProviders.map(p => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-        <div style={{ width: 1, height: 12, background: "var(--color-border)" }} />
-        <select
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          style={{ padding: "6px 4px", background: "transparent", border: "none", color: "var(--color-text-muted)", fontSize: 11, outline: "none", cursor: "pointer", maxWidth: 140 }}
-          disabled={!provider || (availableProviders.find(p => p.id === provider)?.models.length || 0) === 0}
-        >
-          {(availableProviders.find(p => p.id === provider)?.models || []).map(m => (
-            <option key={m} value={m}>{m}</option>
-          ))}
-        </select>
-      </div>
+      {planOptions.length > 0 ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--color-surface2)", padding: "2px 8px", borderRadius: 12, border: "1px solid var(--color-border)" }}>
+          <span style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-text-muted)" }}>Model Plan</span>
+          <select
+            value={selectedPlanId || selectedPlan?.id || ""}
+            onChange={(e) => setSelectedPlanId(e.target.value)}
+            style={{ padding: "6px 4px", background: "transparent", border: "none", color: "var(--color-text)", fontSize: 11, fontWeight: 600, outline: "none", cursor: "pointer", minWidth: 120 }}
+          >
+            {planOptions.map((plan) => (
+              <option key={plan.id} value={plan.id} disabled={!plan.canUse}>
+                {plan.name}{plan.canUse ? "" : " (Upgrade)"}
+              </option>
+            ))}
+            <option value="byok">Bring Your Own Key (BYOK)</option>
+          </select>
+          {(selectedPlan && selectedPlanId !== "byok") ? (
+            <span style={{ fontSize: 10, color: "var(--color-text-muted)" }}>
+              {selectedPlan.provider}:{selectedPlan.model}
+            </span>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <div style={{ width: 1, height: 12, background: "var(--color-border)", margin: "0 4px" }} />
+              <select
+                value={provider}
+                onChange={(e) => {
+                  const opt = availableProviders.find((p) => p.id === e.target.value) || availableProviders[0];
+                  setProvider(opt.id);
+                  setModel(opt.models?.[0] || "");
+                }}
+                style={{ padding: "6px 4px", background: "transparent", border: "none", color: "var(--color-text)", fontSize: 11, fontWeight: 600, outline: "none", cursor: "pointer", maxWidth: 100 }}
+              >
+                {availableProviders.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+              <div style={{ width: 1, height: 12, background: "var(--color-border)" }} />
+              <input
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                list="builder-byok-model-options"
+                placeholder="Model ID (e.g. deepseek-chat)"
+                style={{
+                  padding: "6px 8px",
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--color-text-muted)",
+                  fontSize: 11,
+                  outline: "none",
+                  maxWidth: 180,
+                }}
+              />
+              <datalist id="builder-byok-model-options">
+                {(availableProviders.find((p) => p.id === provider)?.models || []).map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: 4, background: "var(--color-surface2)", padding: "2px 8px", borderRadius: 12, border: "1px solid var(--color-border)" }}>
+          <select
+            value={provider}
+            onChange={(e) => {
+              const opt = availableProviders.find((p) => p.id === e.target.value) || availableProviders[0];
+              setProvider(opt.id);
+              setModel(opt.models?.[0] || "");
+            }}
+            style={{ padding: "6px 4px", background: "transparent", border: "none", color: "var(--color-text)", fontSize: 11, fontWeight: 600, outline: "none", cursor: "pointer", maxWidth: 100 }}
+          >
+            {availableProviders.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+          <div style={{ width: 1, height: 12, background: "var(--color-border)" }} />
+          <select
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            style={{ padding: "6px 4px", background: "transparent", border: "none", color: "var(--color-text-muted)", fontSize: 11, outline: "none", cursor: "pointer", maxWidth: 140 }}
+            disabled={!provider || (availableProviders.find((p) => p.id === provider)?.models.length || 0) === 0}
+          >
+            {(availableProviders.find((p) => p.id === provider)?.models || []).map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {state.status !== 'idle' && (
         <button
@@ -799,7 +950,7 @@ export default function BuilderPage() {
                     e.preventDefault();
                     if (initialPrompt.trim()) {
                       shouldAutoOpenGeneratedSessionRef.current = true;
-                      generate({ prompt: initialPrompt.trim(), provider, model, apiKey, projectId: state.sessionId || "" });
+                      generate({ prompt: initialPrompt.trim(), provider, model, apiKey, planId: selectedPlanId, projectId: state.sessionId || "" });
                       setIsInitialState(false);
                     }
                   }
@@ -814,7 +965,7 @@ export default function BuilderPage() {
                   onClick={() => {
                     if (initialPrompt.trim()) {
                       shouldAutoOpenGeneratedSessionRef.current = true;
-                      generate({ prompt: initialPrompt.trim(), provider, model, apiKey, projectId: state.sessionId || "" });
+                      generate({ prompt: initialPrompt.trim(), provider, model, apiKey, planId: selectedPlanId, projectId: state.sessionId || "" });
                       setIsInitialState(false);
                     }
                   }}
@@ -879,13 +1030,13 @@ export default function BuilderPage() {
               onGenerate={(prompt) => {
                 const projectId = state.sessionId;
                 if (!projectId) {
-                  generate({ prompt: prompt.trim(), provider, model, apiKey });
+                  generate({ prompt: prompt.trim(), provider, model, apiKey, planId: selectedPlanId });
                 } else {
-                  generate({ prompt: prompt.trim(), provider, model, apiKey, projectId: projectId });
+                  generate({ prompt: prompt.trim(), provider, model, apiKey, planId: selectedPlanId, projectId: projectId });
                 }
                 setIsInitialState(false);
               }}
-              onResume={() => resumeGeneration({ prompt: "", provider, model, apiKey, projectId: state.sessionId || id || "" })}
+              onResume={() => resumeGeneration({ prompt: "", provider, model, apiKey, planId: selectedPlanId, projectId: state.sessionId || id || "" })}
               onStop={stop} onReset={() => {
                 reset();
                 setInitialPrompt("");
