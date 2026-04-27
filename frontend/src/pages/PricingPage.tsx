@@ -20,8 +20,8 @@ const plans = [
     popular: false,
   },
   {
-    name: "Pro",
-    price: "$29",
+    name: "Plus",
+    price: "$15",
     period: "/month",
     description: "For developers building production apps",
     icon: <Rocket size={24} />,
@@ -38,8 +38,8 @@ const plans = [
     popular: true,
   },
   {
-    name: "Enterprise",
-    price: "Custom",
+    name: "Pro",
+    price: "30$",
     period: "",
     description: "For teams requiring advanced security & support",
     icon: <Building2 size={24} />,

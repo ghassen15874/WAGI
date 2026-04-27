@@ -8,6 +8,7 @@ import bcrypt
 from ..db import get_conn, row_to_dict
 from ..auth.jwt import create_access_token
 from ..auth.middleware import get_current_user
+from ..billing import ensure_user_subscription
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -32,6 +33,8 @@ def _user_out(row: dict) -> dict:
         "isActive": bool(row["is_active"]),
         "githubConnected": bool(row.get("github_connected", False)),
         "githubUsername": row.get("github_username", "") or "",
+        "planId": row.get("plan_id", "free") or "free",
+        "planName": row.get("plan_name", "Free") or "Free",
         "createdAt": row["created_at"],
     }
 
@@ -66,6 +69,8 @@ async def register(req: RegisterRequest):
         )
         conn.commit()
 
+        ensure_user_subscription(user_id)
+
         # Log event
         conn.execute(
             "INSERT INTO logs (id, user_id, event, detail, level) VALUES (%s,%s,%s,%s,%s)",
@@ -74,19 +79,45 @@ async def register(req: RegisterRequest):
         conn.commit()
 
         token = create_access_token({"sub": user_id, "email": email, "role": "USER"})
-        return {"token": token, "user": {"id": user_id, "email": email, "role": "USER", "isActive": True}}
+        return {
+            "token": token,
+            "user": {
+                "id": user_id,
+                "email": email,
+                "role": "USER",
+                "isActive": True,
+                "planId": "free",
+                "planName": "Free",
+            },
+        }
 
 
 @router.post("/login")
 async def login(req: LoginRequest):
     email = req.email.lower().strip()
     with get_conn() as conn:
-        row = conn.execute("SELECT * FROM users WHERE email = %s", (email,)).fetchone()
+        row = conn.execute(
+            """
+            SELECT
+                users.*,
+                user_subscriptions.plan_id,
+                subscription_plans.name AS plan_name
+            FROM users
+            LEFT JOIN user_subscriptions ON user_subscriptions.user_id = users.id
+            LEFT JOIN subscription_plans ON subscription_plans.id = user_subscriptions.plan_id
+            WHERE users.email = %s
+            """,
+            (email,),
+        ).fetchone()
         if not row or not bcrypt.checkpw(req.password.encode('utf-8'), row["password_hash"].encode('utf-8')):
             raise HTTPException(401, "Invalid email or password")
         if not row["is_active"]:
             raise HTTPException(403, "Account suspended")
         user = dict(row)
+        ensure_user_subscription(user["id"])
+        if not user.get("plan_id"):
+            user["plan_id"] = "free"
+            user["plan_name"] = "Free"
         conn.execute(
             "INSERT INTO logs (id, user_id, event, level) VALUES (%s,%s,%s,%s)",
             (str(uuid.uuid4()), user["id"], "user.login", "info"),
@@ -98,8 +129,21 @@ async def login(req: LoginRequest):
 
 @router.get("/me")
 async def me(current_user: dict = Depends(get_current_user)):
+    ensure_user_subscription(current_user["sub"])
     with get_conn() as conn:
-        row = conn.execute("SELECT * FROM users WHERE id = %s", (current_user["sub"],)).fetchone()
+        row = conn.execute(
+            """
+            SELECT
+                users.*,
+                user_subscriptions.plan_id,
+                subscription_plans.name AS plan_name
+            FROM users
+            LEFT JOIN user_subscriptions ON user_subscriptions.user_id = users.id
+            LEFT JOIN subscription_plans ON subscription_plans.id = user_subscriptions.plan_id
+            WHERE users.id = %s
+            """,
+            (current_user["sub"],),
+        ).fetchone()
         if not row:
             raise HTTPException(404, "User not found")
         return _user_out(dict(row))

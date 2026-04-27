@@ -89,7 +89,7 @@ def hydrate_user_provider_keys(user_id: str) -> dict[str, str]:
     return {provider: ",".join(keys) for provider, keys in grouped.items()}
 
 
-def validate_registry_selection(provider_id: str, model_id: str) -> None:
+def validate_registry_selection(provider_id: str, model_id: str, *, require_registered_model: bool = True) -> None:
     with get_conn() as conn:
         provider_row = conn.execute(
             "SELECT id, enabled FROM provider_registry WHERE id = %s",
@@ -103,7 +103,7 @@ def validate_registry_selection(provider_id: str, model_id: str) -> None:
         if provider_id == "auto":
             return
 
-        if model_id:
+        if require_registered_model and model_id:
             model_row = conn.execute(
                 "SELECT id, provider_id, model_id, enabled FROM model_registry WHERE provider_id = %s AND model_id = %s",
                 (provider_id, model_id),

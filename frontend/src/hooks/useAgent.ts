@@ -15,6 +15,7 @@ interface GenerateOptions {
     provider: string
     model: string
     apiKey: string
+    planId?: string
     scraperUrl?: string
     projectId?: string
     resume?: boolean
@@ -129,6 +130,7 @@ export function useAgent() {
                 message: opts.prompt, // Updated for ChatRequest
                 provider: opts.provider,
                 model: opts.model,
+                plan_id: opts.planId || '',
                 scraper_url: opts.scraperUrl || '',
                 projectId: opts.projectId || '',
                 resume: Boolean(opts.resume),

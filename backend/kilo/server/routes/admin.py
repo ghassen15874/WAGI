@@ -4,6 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel
 
+from ..billing import ensure_user_subscription, get_plan, list_plans, set_plan_api_key, set_user_plan
 from ..db import get_conn
 from ..auth.middleware import require_admin
 
@@ -14,6 +15,7 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 class UserUpdate(BaseModel):
     isActive: bool | None = None
     role: str | None = None
+    planId: str | None = None
 
 class CreateUserRequest(BaseModel):
     email: str
@@ -35,8 +37,36 @@ class CreateModelRequest(BaseModel):
     provider: str
     enabled: bool = True
 
+class PlanUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    limitStrategy: str | None = None
+    dailyTokenLimit: int | None = None
+    totalTokenLimit: int | None = None
+    monthlyPriceCents: int | None = None
+    monthlyRequestLimit: int | None = None
+    inputTokenPricePerMillion: float | None = None
+    outputTokenPricePerMillion: float | None = None
+    stripePriceId: str | None = None
+    active: bool | None = None
+    sortOrder: int | None = None
+    apiKey: str | None = None
+
 
 _global_pipeline = {"selfHealingEnabled": True, "validationEnabled": True}
+
+
+def _normalize_stripe_price_id(value: str | None) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_limit_strategy(value: str | None) -> str:
+    strategy = str(value or "").strip().lower()
+    if strategy not in {"daily", "monthly", "total"}:
+        raise HTTPException(400, "limitStrategy must be one of: daily, monthly, total")
+    return strategy
 
 
 # ── User Management ───────────────────────────────────────────────────────────
@@ -49,7 +79,13 @@ async def list_users(
 ):
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT id, email, role, is_active, created_at FROM users ORDER BY created_at DESC LIMIT %s OFFSET %s",
+            """
+            SELECT u.id, u.email, u.role, u.is_active, u.created_at, us.plan_id
+            FROM users u
+            LEFT JOIN user_subscriptions us ON us.user_id = u.id
+            ORDER BY u.created_at DESC
+            LIMIT %s OFFSET %s
+            """,
             (limit, skip),
         ).fetchall()
         total = conn.execute("SELECT COUNT(*) AS total FROM users").fetchone()["total"]
@@ -81,6 +117,7 @@ async def create_user(req: CreateUserRequest, _admin: dict = Depends(require_adm
             (str(uuid.uuid4()), _admin["sub"], "admin.create_user", f"email={email}", "info"),
         )
         conn.commit()
+    ensure_user_subscription(user_id)
     return {"id": user_id, "email": email, "role": req.role.upper()}
 
 
@@ -95,11 +132,16 @@ async def update_user(user_id: str, req: UserUpdate, _admin: dict = Depends(requ
             conn.execute("UPDATE users SET is_active=%s, updated_at=%s WHERE id=%s", (req.isActive, now, user_id))
         if req.role is not None:
             conn.execute("UPDATE users SET role=%s, updated_at=%s WHERE id=%s", (req.role.upper(), now, user_id))
+        
         conn.execute(
             "INSERT INTO logs (id, user_id, event, detail, level) VALUES (%s,%s,%s,%s,%s)",
             (str(uuid.uuid4()), _admin["sub"], "admin.update_user", f"target={user_id}", "info"),
         )
         conn.commit()
+
+    if req.planId is not None:
+        set_user_plan(user_id=user_id, plan_id=req.planId, status="active")
+
     return {"status": "ok"}
 
 
@@ -226,6 +268,149 @@ async def create_model(req: CreateModelRequest, _admin: dict = Depends(require_a
     return {"id": registry_id, "modelId": model_name, "provider": provider_id, "enabled": req.enabled}
 
 
+# ── Plans ────────────────────────────────────────────────────────────────────
+
+@router.get("/plans")
+async def list_subscription_plans(_admin: dict = Depends(require_admin)):
+    plans = list_plans(active_only=False)
+    payload = []
+    for row in plans:
+        payload.append(
+            {
+                "id": row["id"],
+                "name": row.get("name", row["id"].title()),
+                "description": row.get("description", "") or "",
+                "provider": row["provider_id"],
+                "model": row["model_id"],
+                "limitStrategy": row.get("limit_strategy", "monthly") or "monthly",
+                "dailyTokenLimit": int(row.get("daily_token_limit", 0) or 0),
+                "totalTokenLimit": int(row.get("total_token_limit", 0) or 0),
+                "monthlyPriceCents": int(row.get("monthly_price_cents", 0) or 0),
+                "monthlyRequestLimit": int(row.get("monthly_request_limit", 0) or 0),
+                "inputTokenPricePerMillion": float(row.get("input_token_price_per_million", 0) or 0),
+                "outputTokenPricePerMillion": float(row.get("output_token_price_per_million", 0) or 0),
+                "stripePriceId": row.get("stripe_price_id", "") or "",
+                "active": bool(row.get("active", True)),
+                "sortOrder": int(row.get("sort_order", 0) or 0),
+                "apiKeyConfigured": bool(row.get("encrypted_api_key", "") or ""),
+            }
+        )
+    return {"plans": payload}
+
+
+@router.patch("/plans/{plan_id}")
+async def update_subscription_plan(plan_id: str, req: PlanUpdate, _admin: dict = Depends(require_admin)):
+    normalized_plan_id = plan_id.strip().lower()
+    existing = get_plan(normalized_plan_id, active_only=False)
+    if not existing:
+        raise HTTPException(404, "Plan not found")
+
+    with get_conn() as conn:
+        provider_id = (req.provider or existing["provider_id"]).strip().lower()
+        model_id = (req.model or existing["model_id"]).strip()
+        stripe_price_id = _normalize_stripe_price_id(
+            req.stripePriceId if req.stripePriceId is not None else existing.get("stripe_price_id", "")
+        )
+        limit_strategy = _normalize_limit_strategy(
+            req.limitStrategy if req.limitStrategy is not None else existing.get("limit_strategy", "monthly")
+        )
+        daily_token_limit = int(req.dailyTokenLimit if req.dailyTokenLimit is not None else existing.get("daily_token_limit", 0) or 0)
+        total_token_limit = int(req.totalTokenLimit if req.totalTokenLimit is not None else existing.get("total_token_limit", 0) or 0)
+
+        provider_row = conn.execute(
+            "SELECT id FROM provider_registry WHERE id = %s",
+            (provider_id,),
+        ).fetchone()
+        if not provider_row:
+            raise HTTPException(404, f"Unknown provider: {provider_id}")
+
+        model_row = conn.execute(
+            """
+            SELECT id
+            FROM model_registry
+            WHERE provider_id = %s AND model_id = %s
+            """,
+            (provider_id, model_id),
+        ).fetchone()
+        if not model_row:
+            raise HTTPException(404, f"Model '{model_id}' is not registered for provider '{provider_id}'")
+
+        conn.execute(
+            """
+            UPDATE subscription_plans SET
+                name = %s,
+                description = %s,
+                provider_id = %s,
+                model_id = %s,
+                limit_strategy = %s,
+                daily_token_limit = %s,
+                total_token_limit = %s,
+                monthly_price_cents = %s,
+                monthly_request_limit = %s,
+                input_token_price_per_million = %s,
+                output_token_price_per_million = %s,
+                stripe_price_id = %s,
+                active = %s,
+                sort_order = %s,
+                updated_at = NOW()
+            WHERE id = %s
+            """,
+            (
+                (req.name if req.name is not None else existing.get("name", normalized_plan_id.title())).strip(),
+                (req.description if req.description is not None else existing.get("description", "")).strip(),
+                provider_id,
+                model_id,
+                limit_strategy,
+                daily_token_limit,
+                total_token_limit,
+                int(req.monthlyPriceCents if req.monthlyPriceCents is not None else existing.get("monthly_price_cents", 0) or 0),
+                int(req.monthlyRequestLimit if req.monthlyRequestLimit is not None else existing.get("monthly_request_limit", 0) or 0),
+                float(req.inputTokenPricePerMillion if req.inputTokenPricePerMillion is not None else existing.get("input_token_price_per_million", 0) or 0),
+                float(req.outputTokenPricePerMillion if req.outputTokenPricePerMillion is not None else existing.get("output_token_price_per_million", 0) or 0),
+                stripe_price_id,
+                bool(req.active if req.active is not None else existing.get("active", True)),
+                int(req.sortOrder if req.sortOrder is not None else existing.get("sort_order", 0) or 0),
+                normalized_plan_id,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO logs (id, user_id, event, detail, level) VALUES (%s,%s,%s,%s,%s)",
+            (
+                str(uuid.uuid4()),
+                _admin["sub"],
+                "admin.update_plan",
+                f"plan={normalized_plan_id}, provider={provider_id}, model={model_id}",
+                "info",
+            ),
+        )
+        conn.commit()
+
+    if req.apiKey is not None:
+        set_plan_api_key(normalized_plan_id, req.apiKey)
+
+    updated = get_plan(normalized_plan_id, active_only=False)
+    return {
+        "plan": {
+            "id": updated["id"],
+            "name": updated.get("name", updated["id"].title()),
+            "description": updated.get("description", "") or "",
+            "provider": updated["provider_id"],
+            "model": updated["model_id"],
+            "limitStrategy": updated.get("limit_strategy", "monthly") or "monthly",
+            "dailyTokenLimit": int(updated.get("daily_token_limit", 0) or 0),
+            "totalTokenLimit": int(updated.get("total_token_limit", 0) or 0),
+            "monthlyPriceCents": int(updated.get("monthly_price_cents", 0) or 0),
+            "monthlyRequestLimit": int(updated.get("monthly_request_limit", 0) or 0),
+            "inputTokenPricePerMillion": float(updated.get("input_token_price_per_million", 0) or 0),
+            "outputTokenPricePerMillion": float(updated.get("output_token_price_per_million", 0) or 0),
+            "stripePriceId": updated.get("stripe_price_id", "") or "",
+            "active": bool(updated.get("active", True)),
+            "sortOrder": int(updated.get("sort_order", 0) or 0),
+            "apiKeyConfigured": bool(updated.get("encrypted_api_key", "") or ""),
+        }
+    }
+
+
 # ── Pipeline Global Control ────────────────────────────────────────────────────
 
 @router.get("/pipeline")
@@ -285,11 +470,23 @@ async def get_metrics(_admin: dict = Depends(require_admin)):
         total_keys = conn.execute("SELECT COUNT(*) AS total FROM api_keys").fetchone()["total"]
         total_logs = conn.execute("SELECT COUNT(*) AS total FROM logs").fetchone()["total"]
         error_logs = conn.execute("SELECT COUNT(*) AS total FROM logs WHERE level='error'").fetchone()["total"]
+        
+        # User count by plan
+        plan_counts = conn.execute(
+            """
+            SELECT plan_id, COUNT(*) as count 
+            FROM user_subscriptions 
+            GROUP BY plan_id
+            """
+        ).fetchall()
+        
         provider_rows = conn.execute(
             "SELECT id, enabled FROM provider_registry ORDER BY sort_order ASC, id ASC"
         ).fetchall()
+        
         return {
             "users": {"total": total_users, "active": active_users, "admins": admin_count},
+            "subscriptions": {row["plan_id"]: row["count"] for row in plan_counts},
             "api_keys": {"total": total_keys},
             "logs": {"total": total_logs, "errors": error_logs},
             "providers": {row["id"]: bool(row["enabled"]) for row in provider_rows},
@@ -305,5 +502,6 @@ def _fmt_user(row: dict) -> dict:
         "email": row["email"],
         "role": row["role"],
         "isActive": bool(row["is_active"]),
+        "planId": row.get("plan_id", "free") or "free",
         "createdAt": row["created_at"],
     }

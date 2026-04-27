@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
+import axios from "axios";
 import {
   Rocket,
   Shield,
@@ -34,7 +35,7 @@ const AnimatedSection: React.FC<AnimatedSectionProps> = ({
   children,
   delay = 0,
 }) => {
-  const [isVisible, setIsVisible] = useState(false);
+  const [isVisible, setIsVisible] = useState(true); // Default to true for reliability
   const [ref, setRef] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -79,7 +80,7 @@ const FeatureCard: React.FC<FeatureCardProps> = ({
   description,
   delay = 0,
 }) => {
-  const [isVisible, setIsVisible] = useState(false);
+  const [isVisible, setIsVisible] = useState(true); // Default to true for reliability
   const [ref, setRef] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -168,8 +169,8 @@ const FeatureCard: React.FC<FeatureCardProps> = ({
       >
         {React.isValidElement(icon)
           ? React.cloneElement(icon as React.ReactElement<{ size?: number }>, {
-              size: 28,
-            })
+            size: 28,
+          })
           : icon}
       </div>
       <h3
@@ -196,6 +197,7 @@ const FeatureCard: React.FC<FeatureCardProps> = ({
 };
 
 interface PricingCardProps {
+  id: string;
   name: string;
   price: string;
   period: string;
@@ -203,9 +205,11 @@ interface PricingCardProps {
   cta: string;
   popular: boolean;
   delay?: number;
+  onCta: (id: string) => void;
 }
 
 const PricingCard: React.FC<PricingCardProps> = ({
+  id,
   name,
   price,
   period,
@@ -213,8 +217,9 @@ const PricingCard: React.FC<PricingCardProps> = ({
   cta,
   popular,
   delay = 0,
+  onCta,
 }) => {
-  const [isVisible, setIsVisible] = useState(false);
+  const [isVisible, setIsVisible] = useState(true); // Default to true for reliability
   const [ref, setRef] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -313,13 +318,16 @@ const PricingCard: React.FC<PricingCardProps> = ({
           {period}
         </span>
       </div>
-      <Link
-        to="/register"
+      <button
+        onClick={() => onCta(id)}
         style={{
+          width: "100%",
+          border: "none",
+          cursor: "pointer",
           background: popular
             ? "linear-gradient(135deg, var(--color-accent) 0%, #a78bfa 100%)"
             : "var(--color-text)",
-          color: "#000",
+          color: popular ? "#000" : "var(--color-bg)",
           textDecoration: "none",
           fontWeight: 600,
           padding: "14px 24px",
@@ -333,7 +341,7 @@ const PricingCard: React.FC<PricingCardProps> = ({
         }}
       >
         {cta}
-      </Link>
+      </button>
       <ul
         style={{
           listStyle: "none",
@@ -391,7 +399,7 @@ const StepCard: React.FC<StepCardProps> = ({
   delay = 0,
   isLast = false,
 }) => {
-  const [isVisible, setIsVisible] = useState(false);
+  const [isVisible, setIsVisible] = useState(true); // Default to true for reliability
   const [ref, setRef] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -489,7 +497,7 @@ const StepCard: React.FC<StepCardProps> = ({
 };
 
 export default function LandingPage() {
-  const [heroVisible, setHeroVisible] = useState(false);
+  const [heroVisible, setHeroVisible] = useState(true); // Default to true for reliability
   const { user } = useAuth();
   const howItWorksSteps = [
     {
@@ -531,6 +539,30 @@ export default function LandingPage() {
     const timer = setTimeout(() => setHeroVisible(true), 100);
     return () => clearTimeout(timer);
   }, []);
+
+  const handleCta = async (planId: string) => {
+    if (!user) {
+      window.location.href = "/register";
+      return;
+    }
+    if (planId === "free") {
+      window.location.href = "/dashboard";
+      return;
+    }
+    try {
+      // Create a checkout session and redirect
+      const res = await axios.post(
+        "/api/billing/checkout",
+        { plan_id: planId },
+        { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }
+      );
+      if (res.data.checkoutUrl) {
+        window.location.href = res.data.checkoutUrl;
+      }
+    } catch (err) {
+      window.location.href = "/dashboard?tab=billing";
+    }
+  };
 
   return (
     <div
@@ -1039,12 +1071,13 @@ export default function LandingPage() {
           }}
         >
           <PricingCard
+            id="free"
             name="Free"
             price="$0"
             period="forever"
             features={[
               "3 projects",
-              "500MB storage",
+              "100k daily tokens",
               "Basic AI generation",
               "Community support",
               "Public deployments",
@@ -1052,39 +1085,43 @@ export default function LandingPage() {
             cta="Get Started"
             popular={false}
             delay={100}
+            onCta={handleCta}
           />
           <PricingCard
-            name="Pro"
-            price="$29"
-            period="/month"
+            id="plus"
+            name="Plus"
+            price="$15"
+            period="one-time"
             features={[
               "Unlimited projects",
-              "10GB storage",
-              "Advanced AI",
-              "Priority support",
+              "1M token bucket",
+              "Priority AI generation",
               "Private deployments",
-              "Custom domains",
-              "API access",
+              "BYOK Support",
+              "Dashboard tokens tracking",
             ]}
-            cta="Start Free Trial"
+            cta="Buy Token Pack"
             popular={true}
             delay={200}
+            onCta={handleCta}
           />
           <PricingCard
-            name="Enterprise"
-            price="Custom"
-            period=""
+            id="pro"
+            name="Pro"
+            price="$30"
+            period="one-time"
             features={[
-              "Unlimited everything",
-              "Dedicated infrastructure",
-              "SSO & SAML",
-              "24/7 phone support",
-              "Custom SLA",
-              "Dedicated account manager",
+              "Enterprise speed",
+              "5M token bucket",
+              "Priority support",
+              "Team collaboration",
+              "Persistent Workspaces",
+              "Custom Domain support",
             ]}
-            cta="Contact Sales"
+            cta="Scale Credits"
             popular={false}
             delay={300}
+            onCta={handleCta}
           />
         </div>
       </section>

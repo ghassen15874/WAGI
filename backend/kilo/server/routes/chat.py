@@ -17,7 +17,7 @@ import json
 import os
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -34,6 +34,7 @@ from ...providers.runtime_keys import get_runtime_key
 from ...session.runtime import BuildSessionRuntime
 from ...shared.design.engine import DesignEngine
 from ...tools.registry import ToolRegistry
+from ..billing import enforce_usage_limits, get_plan_api_key, get_user_plan_bundle, increment_request_usage
 from ..auth.middleware import get_current_user_optional
 from ..config import settings
 from ..db import get_conn
@@ -54,6 +55,7 @@ class ChatRequest(BaseModel):
     projectId: str = ""
     chat_history: list[dict] = []
     resume: bool = False
+    plan_id: str = ""
 
     def resolved_model(self) -> str:
         return self.model_id.strip() or self.model.strip()
@@ -75,6 +77,10 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user_o
     api_key = req.api_key.strip()
     pipeline_config: dict = {}
     user_provider_keys: dict[str, str] = {}
+    resolved_provider = req.provider
+    resolved_model = req.resolved_model()
+    selected_plan = None
+    byok_mode = bool(current_user and req.plan_id == "byok")
 
     if current_user:
         with get_conn() as conn:
@@ -85,18 +91,54 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user_o
         if row:
             pipeline_config = dict(row)
         user_provider_keys = hydrate_user_provider_keys(current_user["sub"])
+        if byok_mode:
+            selected_plan = None
+            resolved_provider = req.provider
+            resolved_model = req.resolved_model()
+        else:
+            plan_bundle = get_user_plan_bundle(current_user["sub"], req.plan_id)
+            selected_plan = plan_bundle["selected_plan"]
+            resolved_provider = selected_plan["provider_id"]
+            resolved_model = selected_plan["model_id"]
+            enforce_usage_limits(current_user["sub"], selected_plan)
 
     key_name_map = {
         "groq": "GROQ_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
         "openai": "OPENAI_API_KEY",
         "openrouter": "OPENROUTER_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
         "scraper": "SCRAPER_API_KEY",
     }
-    key_env_name = key_name_map.get(req.provider, f"{req.provider.upper()}_API_KEY")
+    key_env_name = key_name_map.get(resolved_provider, f"{resolved_provider.upper()}_API_KEY")
 
     if current_user:
-        api_key = user_provider_keys.get(req.provider, "").strip()
+        if selected_plan:
+            api_key = get_plan_api_key(selected_plan).strip()
+            if not api_key:
+                raise HTTPException(
+                    400,
+                    (
+                        f"No admin API key configured for plan '{selected_plan.get('name', selected_plan.get('id', 'plan'))}'. "
+                        "Ask admin to add the plan API key in Admin > Plans."
+                    ),
+                )
+        elif not api_key:
+            api_key = user_provider_keys.get(resolved_provider, "").strip()
+            if byok_mode and not api_key:
+                raise HTTPException(
+                    400,
+                    (
+                        f"No BYOK key found for provider '{resolved_provider}'. "
+                        "Add your provider key in Dashboard > Settings > API Keys."
+                    ),
+                )
+        if not api_key and not byok_mode:
+            runtime_key = get_runtime_key(key_env_name)
+            if runtime_key:
+                api_key = runtime_key
+            else:
+                api_key = str(getattr(settings, key_env_name, "") or "").strip()
     else:
         if not explicit_api_key_supplied and not api_key:
             runtime_key = get_runtime_key(key_env_name)
@@ -106,14 +148,23 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user_o
                 api_key = str(getattr(settings, key_env_name, "") or "").strip()
         # If explicit, use as-is
 
-    if api_key and req.provider not in ("scraper", "auto"):
-        register_provider_keys(req.provider, api_key)
+    if api_key and resolved_provider not in ("scraper", "auto"):
+        register_provider_keys(resolved_provider, api_key)
+
+    validate_registry_selection(
+        resolved_provider,
+        resolved_model if not byok_mode else "",
+        require_registered_model=not byok_mode,
+    )
 
     try:
-        provider = get_provider(req.provider, api_key, scraper_url=req.scraper_url or settings.SCRAPER_URL)
+        provider = get_provider(resolved_provider, api_key, scraper_url=req.scraper_url or settings.SCRAPER_URL)
     except ValueError:
         # Graceful degradation: use a stub provider that returns a polite error
-        provider = _NoKeyProvider(req.provider)
+        provider = _NoKeyProvider(resolved_provider)
+
+    if current_user and selected_plan:
+        increment_request_usage(current_user["sub"], 1)
 
     # ── Resolve project / sandbox ─────────────────────────────────────
     session_id = req.projectId.strip()
@@ -151,11 +202,14 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user_o
         resolve_sandbox = os.path.join(settings.SANDBOX_BASE_DIR, resolve_session_id)
         os.makedirs(resolve_sandbox, exist_ok=True)
 
-        pipeline_config["_request_provider"] = req.provider
-        pipeline_config["_request_model"] = req.resolved_model()
+        pipeline_config["_request_provider"] = resolved_provider
+        pipeline_config["_request_model"] = resolved_model
         pipeline_config["_request_api_key"] = api_key
         pipeline_config["_request_scraper_url"] = req.scraper_url or settings.SCRAPER_URL
         pipeline_config["_user_provider_keys"] = user_provider_keys
+        pipeline_config["_selected_plan_id"] = req.plan_id if req.plan_id == "byok" else (selected_plan or {}).get("id", "")
+        if current_user:
+            pipeline_config["user_id"] = current_user["sub"]
         pipeline_config["target_files_override"] = target_files or []
 
         if req.resume:
@@ -175,7 +229,7 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user_o
             provider=provider,
             tool_registry=ToolRegistry(base_dir=resolve_sandbox),
             design_engine=DesignEngine(),
-            model_id=req.resolved_model(),
+            model_id=resolved_model,
             pipeline_config=pipeline_config,
         )
         start_generation_task(session_runtime, prompt, resolve_session_id, resolve_sandbox, resume=req.resume)
@@ -184,7 +238,7 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user_o
     # ── Build router and run ──────────────────────────────────────────
     decision_router = DecisionRouter(
         provider=provider,
-        model_id=req.resolved_model(),
+        model_id=resolved_model,
         sandbox_dir=sandbox,
         generate_fn=_generate_fn,
     )

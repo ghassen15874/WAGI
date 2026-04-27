@@ -19,6 +19,7 @@ from ...providers.runtime_keys import get_runtime_key
 from ...session.runtime import BuildSessionRuntime
 from ...shared.design.engine import DesignEngine
 from ...tools.registry import ToolRegistry
+from ..billing import enforce_usage_limits, get_plan_api_key, get_user_plan_bundle, increment_request_usage
 from ..auth.middleware import get_current_user, get_current_user_optional
 from ..config import settings
 from ..db import get_conn
@@ -35,6 +36,7 @@ class GenerateRequest(BaseModel):
     scraper_url: str = ""
     projectId: str = ""
     resume: bool = False
+    plan_id: str = ""
 
     def resolved_model(self) -> str:
         return self.model_id.strip() or self.model.strip()
@@ -49,6 +51,10 @@ async def generate(req: GenerateRequest, current_user: dict = Depends(get_curren
     key_source = "explicit_request" if explicit_api_key_supplied else "unset"
     pipeline_config = None
     user_provider_keys: dict[str, str] = {}
+    resolved_provider = req.provider
+    resolved_model = req.resolved_model()
+    selected_plan = None
+    byok_mode = bool(current_user and req.plan_id == "byok")
     if current_user:
         with get_conn() as conn:
             pipeline_config = conn.execute(
@@ -56,6 +62,16 @@ async def generate(req: GenerateRequest, current_user: dict = Depends(get_curren
                 (current_user["sub"],),
             ).fetchone()
         user_provider_keys = hydrate_user_provider_keys(current_user["sub"])
+        if byok_mode:
+            selected_plan = None
+            resolved_provider = req.provider
+            resolved_model = req.resolved_model()
+        else:
+            plan_bundle = get_user_plan_bundle(current_user["sub"], req.plan_id)
+            selected_plan = plan_bundle["selected_plan"]
+            resolved_provider = selected_plan["provider_id"]
+            resolved_model = selected_plan["model_id"]
+            enforce_usage_limits(current_user["sub"], selected_plan)
 
     pipeline_config = dict(pipeline_config) if pipeline_config else {}
 
@@ -64,13 +80,42 @@ async def generate(req: GenerateRequest, current_user: dict = Depends(get_curren
         "anthropic": "ANTHROPIC_API_KEY",
         "openai": "OPENAI_API_KEY",
         "openrouter": "OPENROUTER_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
         "scraper": "SCRAPER_API_KEY",
     }
-    key_env_name = key_name_map.get(req.provider, f"{req.provider.upper()}_API_KEY")
+    key_env_name = key_name_map.get(resolved_provider, f"{resolved_provider.upper()}_API_KEY")
 
     if current_user:
-        api_key = user_provider_keys.get(req.provider, "").strip()
-        key_source = "user_db" if api_key else "none"
+        if selected_plan:
+            api_key = get_plan_api_key(selected_plan).strip()
+            key_source = "plan_admin" if api_key else "none"
+            if not api_key:
+                raise HTTPException(
+                    400,
+                    (
+                        f"No admin API key configured for plan '{selected_plan.get('name', selected_plan.get('id', 'plan'))}'. "
+                        "Ask admin to add the plan API key in Admin > Plans."
+                    ),
+                )
+        elif not api_key:
+            api_key = user_provider_keys.get(resolved_provider, "").strip()
+            key_source = "user_db" if api_key else key_source
+            if byok_mode and not api_key:
+                raise HTTPException(
+                    400,
+                    (
+                        f"No BYOK key found for provider '{resolved_provider}'. "
+                        "Add your provider key in Dashboard > Settings > API Keys."
+                    ),
+                )
+        if not api_key and not byok_mode:
+            runtime_key = get_runtime_key(key_env_name)
+            if runtime_key:
+                api_key = runtime_key
+                key_source = "runtime_settings"
+            else:
+                api_key = str(getattr(settings, key_env_name, "") or "").strip()
+                key_source = "server_env" if api_key else key_source
     else:
         if not explicit_api_key_supplied and not api_key:
             runtime_key = get_runtime_key(key_env_name)
@@ -83,17 +128,25 @@ async def generate(req: GenerateRequest, current_user: dict = Depends(get_curren
         elif explicit_api_key_supplied:
             key_source = "explicit_request"
 
-    if not api_key and req.provider not in ("scraper", "auto"):
+    if not api_key and resolved_provider not in ("scraper", "auto"):
         if current_user:
-            raise HTTPException(400, f"No stored API keys found for {req.provider}. Add keys in Dashboard > API Keys.")
+            raise HTTPException(
+                400,
+                f"No API key available for provider '{resolved_provider}'. Configure a plan key in Admin > Plans "
+                "or add a BYOK key in Dashboard > Provider.",
+            )
         if explicit_api_key_supplied:
-            raise HTTPException(400, f"Explicit API key override was empty for {req.provider}.")
-        raise HTTPException(400, f"No API key provided for {req.provider}")
+            raise HTTPException(400, f"Explicit API key override was empty for {resolved_provider}.")
+        raise HTTPException(400, f"No API key provided for {resolved_provider}")
 
-    validate_registry_selection(req.provider, req.resolved_model())
+    validate_registry_selection(
+        resolved_provider,
+        resolved_model if not byok_mode else "",
+        require_registered_model=not byok_mode,
+    )
 
     try:
-        provider = get_provider(req.provider, api_key, scraper_url=req.scraper_url or settings.SCRAPER_URL)
+        provider = get_provider(resolved_provider, api_key, scraper_url=req.scraper_url or settings.SCRAPER_URL)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -134,8 +187,8 @@ async def generate(req: GenerateRequest, current_user: dict = Depends(get_curren
     if current_user:
         cancelled_other_builds = await cancel_other_user_generations(current_user["sub"], session_id)
 
-    if api_key and req.provider not in ("scraper", "auto"):
-        register_provider_keys(req.provider, api_key)
+    if api_key and resolved_provider not in ("scraper", "auto"):
+        register_provider_keys(resolved_provider, api_key)
 
     await cancel_project_execution(session_id, sandbox, status_after_cancel=None, narration="")
 
@@ -143,25 +196,36 @@ async def generate(req: GenerateRequest, current_user: dict = Depends(get_curren
         pipeline_config["clear_sandbox_enabled"] = False
         pipeline_config["resume_iteration"] = resume_iteration_from_log(log_path)
 
-    pipeline_config["_request_provider"] = req.provider
-    pipeline_config["_request_model"] = req.resolved_model()
+    pipeline_config["_request_provider"] = resolved_provider
+    pipeline_config["_request_model"] = resolved_model
     pipeline_config["_request_api_key"] = api_key
     pipeline_config["_request_scraper_url"] = req.scraper_url or settings.SCRAPER_URL
     pipeline_config["_user_provider_keys"] = user_provider_keys
     pipeline_config["_resolved_key_source"] = key_source
     pipeline_config["_resolved_key_count"] = len([key for key in api_key.split(",") if key.strip()])
     pipeline_config["_auto_cancelled_builds"] = cancelled_other_builds
+    pipeline_config["_selected_plan_id"] = req.plan_id if req.plan_id == "byok" else (selected_plan or {}).get("id", "")
+    if current_user:
+        pipeline_config["user_id"] = current_user["sub"]
 
     session_runtime = BuildSessionRuntime(
         provider=provider,
         tool_registry=ToolRegistry(base_dir=sandbox),
         design_engine=DesignEngine(),
-        model_id=req.resolved_model(),
+        model_id=resolved_model,
         pipeline_config=pipeline_config,
     )
 
     start_generation_task(session_runtime, req.prompt, session_id, sandbox, resume=req.resume)
-    return {"session_id": session_id, "status": "GENERATING"}
+    if current_user and selected_plan:
+        increment_request_usage(current_user["sub"], 1)
+    return {
+        "session_id": session_id,
+        "status": "GENERATING",
+        "plan_id": (selected_plan or {}).get("id", ""),
+        "provider": resolved_provider,
+        "model": resolved_model,
+    }
 
 
 @router.post("/{project_id}/cancel")

@@ -30,7 +30,7 @@ from ..agents.codegen.prompts import (
     get_summary_saving_prompt,
     get_repair_prompt,
 )
-from ..providers import is_provider_status_token
+from ..providers import is_provider_status_token, _approximate_message_tokens
 from ..shared.design.engine import DesignEngine
 from ..shared.write_guard import normalize_generated_file_content
 from ..tools.registry import ToolRegistry
@@ -47,6 +47,7 @@ from .planning_service import PlanningService
 from .project_spec import _pascal, _singular_slug, _slug
 from .repair_service import PlanRepairService
 from .run_state import GenerationRunStateStore
+from ..server.billing import increment_token_usage, enforce_usage_limits, get_plan
 
 _API_CONTRACT_PATTERNS = [
     r"^src/services/api\.(ts|js)$",
@@ -2969,12 +2970,32 @@ NODE"""
         # From refs/deepagents/graph.py _get_stream / act node
         """
         response = ""
-        async for token in self.provider.stream(
-            self.memory.get_context(), self.model_id
-        ):
+        context = self.memory.get_context()
+        input_tokens = _approximate_message_tokens(context)
+        
+        async for token in self.provider.stream(context, self.model_id):
             if is_provider_status_token(token):
                 continue
             response += token
+            
+        output_tokens = len(response) // 4
+        user_id = self.pipeline_config.get("user_id")
+        plan_id = self.pipeline_config.get("_selected_plan_id")
+        
+        # Only track usage if a standard plan is active (skip for BYOK)
+        if user_id and plan_id and plan_id != "byok":
+            try:
+                increment_token_usage(user_id, input_tokens=input_tokens, output_tokens=output_tokens)
+                
+                # After incrementing, check if they are now over the limit for the next turn
+                p_row = get_plan(plan_id)
+                if p_row:
+                    enforce_usage_limits(user_id, p_row)
+            except Exception as e:
+                if "limit reached" in str(e).lower() or "exhausted" in str(e).lower():
+                    raise # Re-raise billing exhaustion errors to stop generation
+                pass # Ignore other billing errors (network, etc.)
+
         return response, ResponseParser.parse_tool_calls(response)
 
     # ── OBSERVE node ──────────────────────────────────────────────────────────
