@@ -1,14 +1,14 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-const backendTarget = process.env.VITE_API_TARGET || "http://127.0.0.1:8080";
+const backendTarget = process.env.VITE_API_TARGET || "http://127.0.0.1:8000";
 const enableCrossOriginIsolation =
   process.env.VITE_ENABLE_CROSS_ORIGIN_ISOLATION === "true";
 const isolationHeaders = enableCrossOriginIsolation
   ? {
-    "Cross-Origin-Embedder-Policy": "require-corp",
-    "Cross-Origin-Opener-Policy": "same-origin",
-  }
+      "Cross-Origin-Embedder-Policy": "require-corp",
+      "Cross-Origin-Opener-Policy": "same-origin",
+    }
   : undefined;
 
 function malformedUriGuard() {
