@@ -71,117 +71,57 @@ export default function AppLayout({
           {sidebarContent}
         </div>
 
-        {/* Shared Sidebar Footer */}
-        <div
-          style={{
-            padding: isSidebarVisible ? "12px 16px" : "12px 0",
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-            width: "100%",
-            alignItems: isSidebarVisible ? "stretch" : "center",
-            borderTop: "1px solid var(--color-sidebar-border)",
-          }}
-        >
-          {isSidebarVisible ? (
-            <Link
-              to="/dashboard"
-              style={{
-                padding: "10px 12px",
-                borderRadius: "var(--radius-md)",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                fontSize: 13,
-                color: "var(--color-sidebar-text)",
-                textDecoration: "none",
-                transition: "all var(--transition)",
-              }}
-              onMouseEnter={(e) =>
-                (e.currentTarget.style.background =
-                  "var(--color-sidebar-item-hover)")
-              }
-              onMouseLeave={(e) =>
-                (e.currentTarget.style.background = "transparent")
-              }
-            >
-              <Settings size={16} color="var(--color-sidebar-muted)" /> Settings
-            </Link>
-          ) : (
-            <Link
-              to="/dashboard"
-              style={{
-                padding: "10px",
-                borderRadius: "var(--radius-full)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "var(--color-sidebar-text)",
-                textDecoration: "none",
-                transition: "all var(--transition)",
-              }}
-              onMouseEnter={(e) =>
-                (e.currentTarget.style.background =
-                  "var(--color-sidebar-item-hover)")
-              }
-              onMouseLeave={(e) =>
-                (e.currentTarget.style.background = "transparent")
-              }
-              title="Settings"
-            >
-              <Settings size={18} color="var(--color-sidebar-muted)" />
-            </Link>
-          )}
-
-          {isSidebarVisible ? (
-            <Link
-              to="/dashboard?tab=billing"
-              style={{
-                padding: "10px 12px",
-                borderRadius: "var(--radius-md)",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                fontSize: 13,
-                color: "var(--color-sidebar-text)",
-                textDecoration: "none",
-                transition: "all var(--transition)",
-              }}
-              onMouseEnter={(e) =>
-                (e.currentTarget.style.background =
-                  "var(--color-sidebar-item-hover)")
-              }
-              onMouseLeave={(e) =>
-                (e.currentTarget.style.background = "transparent")
-              }
-            >
-              <Plus size={16} color="var(--color-sidebar-muted)" /> Upgrade
-            </Link>
-          ) : (
-            <Link
-              to="/dashboard?tab=billing"
-              style={{
-                padding: "10px",
-                borderRadius: "var(--radius-full)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "var(--color-sidebar-text)",
-                textDecoration: "none",
-                transition: "all var(--transition)",
-              }}
-              onMouseEnter={(e) =>
-                (e.currentTarget.style.background =
-                  "var(--color-sidebar-item-hover)")
-              }
-              onMouseLeave={(e) =>
-                (e.currentTarget.style.background = "transparent")
-              }
-              title="Upgrade"
-            >
-              <Plus size={18} color="var(--color-sidebar-muted)" />
-            </Link>
-          )}
+                {/* Shared Sidebar Footer */}
+                <div
+                    style={{
+                        padding: isSidebarVisible ? "12px 16px" : "12px 0",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 4,
+                        width: "100%",
+                        alignItems: isSidebarVisible ? "stretch" : "center",
+                        borderTop: "1px solid var(--color-sidebar-border)",
+                    }}
+                >
+                    {isSidebarVisible ? (
+                        <Link
+                            to="/dashboard"
+                            style={{
+                                padding: "10px 12px",
+                                borderRadius: "var(--radius-md)",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                fontSize: 13,
+                                color: "var(--color-sidebar-text)",
+                                textDecoration: "none",
+                                transition: "all var(--transition)",
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.background = "var(--color-sidebar-item-hover)"}
+                            onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                        >
+                            <Settings size={16} color="var(--color-sidebar-muted)" /> Settings
+                        </Link>
+                    ) : (
+                        <Link
+                            to="/dashboard"
+                            style={{
+                                padding: "10px",
+                                borderRadius: "var(--radius-full)",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                color: "var(--color-sidebar-text)",
+                                textDecoration: "none",
+                                transition: "all var(--transition)",
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.background = "var(--color-sidebar-item-hover)"}
+                            onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                            title="Settings"
+                        >
+                            <Settings size={18} color="var(--color-sidebar-muted)" />
+                        </Link>
+                    )}
 
           <button
             onClick={logout}

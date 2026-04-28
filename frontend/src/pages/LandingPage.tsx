@@ -169,8 +169,8 @@ const FeatureCard: React.FC<FeatureCardProps> = ({
       >
         {React.isValidElement(icon)
           ? React.cloneElement(icon as React.ReactElement<{ size?: number }>, {
-              size: 28,
-            })
+            size: 28,
+          })
           : icon}
       </div>
       <h3
@@ -539,32 +539,6 @@ export default function LandingPage() {
     const timer = setTimeout(() => setHeroVisible(true), 100);
     return () => clearTimeout(timer);
   }, []);
-
-  const handleCta = async (planId: string) => {
-    if (!user) {
-      window.location.href = "/register";
-      return;
-    }
-    if (planId === "free") {
-      window.location.href = "/dashboard";
-      return;
-    }
-    try {
-      // Create a checkout session and redirect
-      const res = await axios.post(
-        "/api/billing/checkout",
-        { plan_id: planId },
-        {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-        },
-      );
-      if (res.data.checkoutUrl) {
-        window.location.href = res.data.checkoutUrl;
-      }
-    } catch (err) {
-      window.location.href = "/dashboard?tab=billing";
-    }
-  };
 
   return (
     <div
