@@ -169,8 +169,8 @@ const FeatureCard: React.FC<FeatureCardProps> = ({
       >
         {React.isValidElement(icon)
           ? React.cloneElement(icon as React.ReactElement<{ size?: number }>, {
-            size: 28,
-          })
+              size: 28,
+            })
           : icon}
       </div>
       <h3
